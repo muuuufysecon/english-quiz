@@ -252,6 +252,100 @@
     })();
   </script>
 
+  <!-- マイクオフ浮遊ボタン（全画面共通） -->
+  <script>
+    (function () {
+      // SpeechRecognition インスタンスを追跡するためのラッパー
+      window.__activeRecognitions = window.__activeRecognitions || new Set();
+      ['SpeechRecognition', 'webkitSpeechRecognition'].forEach(function (key) {
+        var Original = window[key];
+        if (!Original || Original.__micTrackWrapped) return;
+        function Wrapped() {
+          var instance = new Original();
+          try { window.__activeRecognitions.add(instance); } catch (e) {}
+          try {
+            if (instance.addEventListener) {
+              instance.addEventListener('end', function () {
+                try { window.__activeRecognitions.delete(instance); } catch (e) {}
+              });
+              instance.addEventListener('error', function () {
+                try { window.__activeRecognitions.delete(instance); } catch (e) {}
+              });
+            }
+          } catch (e) {}
+          return instance;
+        }
+        try { Wrapped.prototype = Original.prototype; } catch (e) {}
+        Wrapped.__micTrackWrapped = true;
+        try { window[key] = Wrapped; } catch (e) {}
+      });
+
+      // グローバルな「マイクをオフ」関数
+      window.__stopAllMics = async function () {
+        // 起動中の SpeechRecognition をすべて停止
+        try {
+          var recs = Array.from(window.__activeRecognitions || []);
+          recs.forEach(function (r) {
+            try { r.abort && r.abort(); } catch (e) {}
+            try { r.stop && r.stop(); } catch (e) {}
+          });
+          if (window.__activeRecognitions) window.__activeRecognitions.clear();
+        } catch (e) {}
+        // 読み上げもキャンセル
+        try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {}
+        // OSのマイクインジケーターを消すため、ストリームを一度取得して即停止
+        try {
+          if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+          }
+        } catch (e) {}
+      };
+
+      // 画面右下にマイクオフボタンを注入
+      function injectMicOffButton() {
+        if (document.getElementById('__mic-off-fab')) return;
+        if (!document.body) return;
+        var btn = document.createElement('button');
+        btn.id = '__mic-off-fab';
+        btn.type = 'button';
+        btn.title = 'マイクをオフ（音声認識・読み上げを停止）';
+        btn.textContent = '🎙 マイクをオフ';
+        btn.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:2147483646;padding:10px 14px;border:none;border-radius:9999px;background:#ef4444;color:#fff;font-size:13px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;box-shadow:0 6px 16px rgba(0,0,0,0.25);cursor:pointer;opacity:0.35;transition:transform 0.15s, opacity 0.15s, background 0.15s;-webkit-tap-highlight-color:transparent;';
+        btn.addEventListener('mouseenter', function () { btn.style.opacity = '1'; btn.style.transform = 'scale(1.05)'; });
+        btn.addEventListener('mouseleave', function () { btn.style.opacity = '0.35'; btn.style.transform = 'scale(1)'; });
+        btn.addEventListener('mousedown', function () { btn.style.opacity = '1'; btn.style.transform = 'scale(0.97)'; });
+        btn.addEventListener('mouseup', function () { btn.style.opacity = '1'; btn.style.transform = 'scale(1.05)'; });
+        btn.addEventListener('touchstart', function () { btn.style.opacity = '1'; btn.style.transform = 'scale(0.97)'; }, { passive: true });
+        btn.addEventListener('touchend', function () { btn.style.opacity = '0.35'; btn.style.transform = 'scale(1)'; });
+        btn.addEventListener('touchcancel', function () { btn.style.opacity = '0.35'; btn.style.transform = 'scale(1)'; });
+        btn.addEventListener('click', async function () {
+          var orig = btn.textContent;
+          btn.textContent = '⏳ 停止中…';
+          btn.disabled = true;
+          btn.style.background = '#9ca3af';
+          try { await window.__stopAllMics(); } catch (e) {}
+          btn.textContent = '✓ オフにしました';
+          btn.style.background = '#10b981';
+          setTimeout(function () {
+            btn.textContent = orig;
+            btn.disabled = false;
+            btn.style.background = '#ef4444';
+          }, 1800);
+        });
+        document.body.appendChild(btn);
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', injectMicOffButton);
+      } else {
+        injectMicOffButton();
+      }
+      // React マウントの遅れに備えて遅延も設ける
+      setTimeout(injectMicOffButton, 1000);
+      setTimeout(injectMicOffButton, 3000);
+    })();
+  </script>
+
   <script type="text/babel" data-type="module" data-presets="react">
     import { createRoot } from 'react-dom/client';
 
