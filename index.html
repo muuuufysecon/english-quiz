@@ -1,0 +1,2635 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>英単語テスト</title>
+
+  <!-- Tailwind CSS（CDN） -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Babel スタンドアロン（JSX → JS） -->
+  <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+
+  <!-- React / ReactDOM / lucide-react を ES Modules として読み込む -->
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@18.3.1",
+      "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+      "react-dom": "https://esm.sh/react-dom@18.3.1?deps=react@18.3.1",
+      "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1",
+      "lucide-react": "https://esm.sh/lucide-react?deps=react@18.3.1"
+    }
+  }
+  </script>
+
+  <style>
+    html, body { margin: 0; padding: 0; }
+    /* 初回ロード中の表示 */
+    #root:empty::before {
+      content: "読み込み中…（初回は 5〜10 秒ほどかかります）";
+      display: block;
+      padding: 2rem;
+      text-align: center;
+      color: #666;
+      font-family: sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <noscript>このアプリは JavaScript を使用します。ブラウザで JavaScript を有効にしてください。</noscript>
+
+  <!-- エラーを画面に表示するハンドラ（デバッグ用） -->
+  <script>
+    (function () {
+      var shown = false;
+      var showError = function (title, detail) {
+        shown = true;
+        var root = document.getElementById('root');
+        if (!root) return;
+        root.innerHTML = '';
+        var box = document.createElement('div');
+        box.style.cssText = 'padding:1.5rem;margin:1rem;font-family:sans-serif;color:#b91c1c;background:#fee2e2;border:1px solid #ef4444;border-radius:8px;';
+        var h = document.createElement('h2');
+        h.textContent = title;
+        h.style.cssText = 'margin:0 0 0.5rem;font-size:1.1rem;';
+        var pre = document.createElement('pre');
+        pre.textContent = detail;
+        pre.style.cssText = 'white-space:pre-wrap;word-break:break-all;font-size:0.85rem;line-height:1.5;margin:0;';
+        box.appendChild(h);
+        box.appendChild(pre);
+        root.appendChild(box);
+      };
+      window.addEventListener('error', function (ev) {
+        showError('スクリプトエラー',
+          (ev.message || '') + '\nat ' + (ev.filename || '?') + ':' + ev.lineno + ':' + ev.colno + '\n' +
+          (ev.error && ev.error.stack ? ev.error.stack : ''));
+      });
+      window.addEventListener('unhandledrejection', function (ev) {
+        var r = ev.reason || {};
+        showError('Promise エラー', (r.message || String(r)) + '\n' + (r.stack || ''));
+      });
+      setTimeout(function () {
+        if (shown) return;
+        var root = document.getElementById('root');
+        if (root && root.children.length === 0) {
+          showError('読み込みタイムアウト（15秒）',
+            'React アプリのマウントに15秒以上かかっています。\n\n考えられる原因:\n' +
+            '・ファイルをダブルクリック（file://）で開いている場合、一部のブラウザが ES モジュールの読み込みを拒否します。\n' +
+            '  → 解決: VSCode の Live Server などのローカル HTTP サーバ経由で開く、または GitHub Pages にアップして試す\n' +
+            '・ネット接続が無い／esm.sh・unpkg.com がブロックされている\n' +
+            '・JavaScript の構文エラー（F12 を押して「Console」タブの赤いエラーを確認）');
+        }
+      }, 15000);
+    })();
+  </script>
+
+  <script type="text/babel" data-type="module" data-presets="react">
+    import { createRoot } from 'react-dom/client';
+
+  import React, { useState, useEffect, useRef } from 'react';
+import { Volume2, CheckCircle2, XCircle, ArrowRight, Home, BookOpen, MessageCircle, Ear, Award, History, RefreshCw, CalendarDays, AlertCircle, ChevronLeft, ChevronRight, Mic, PenTool, ListChecks, Settings, Download, Upload } from 'lucide-react';
+
+// --- 未実装データセットのフォールバック（実データを用意するまで空配列で動かす） ---
+const SENTENCES_LEVEL4 = [];
+const SENTENCES_LEVEL5 = [];
+
+// --- LocalStorage 互換シム（Firestore API の置き換え） ---
+const STORAGE_PREFIX = 'english-quiz:';
+const appId = 'english-quiz-local';
+
+// localStorage を安全に扱うヘルパ（プライベートモード／容量超過／壊れた値に強い）
+const safeGetItem = (key) => {
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    console.warn('localStorage.getItem failed:', e);
+    return null;
+  }
+};
+const safeSetItem = (key, value) => {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    console.warn('localStorage.setItem failed:', e);
+    return false;
+  }
+};
+const safeRemoveItem = (key) => {
+  try {
+    localStorage.removeItem(key);
+    return true;
+  } catch (e) {
+    console.warn('localStorage.removeItem failed:', e);
+    return false;
+  }
+};
+const safeJsonParse = (raw) => {
+  if (raw == null) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    console.warn('JSON.parse failed:', e);
+    return null;
+  }
+};
+const genId = (prefix) => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return prefix + crypto.randomUUID();
+  }
+  return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+};
+
+// 端末ごとに固定の userId を作って保存
+const userId = (() => {
+  const k = STORAGE_PREFIX + '__uid';
+  let uid = safeGetItem(k);
+  if (!uid) {
+    uid = genId('user_');
+    safeSetItem(k, uid);
+  }
+  return uid;
+})();
+
+// パス操作ヘルパ
+const buildKey = (segments) => STORAGE_PREFIX + segments.join('/');
+
+// onSnapshot 用のリスナーレジストリ
+const _listeners = new Map(); // path -> Set<fn>
+const _notify = (path) => {
+  for (const [p, set] of _listeners.entries()) {
+    // 自身、または祖先パスのリスナーのみ発火
+    // （子孫リスナーへの伝播は誤発火と再描画の無駄を招くため除外）
+    if (p === path || path.startsWith(p + '/')) {
+      set.forEach((fn) => fn());
+    }
+  }
+};
+
+// 別タブでの localStorage 変更を購読してリスナーへ伝播
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('storage', (ev) => {
+    if (!ev.key || !ev.key.startsWith(STORAGE_PREFIX)) return;
+    const path = ev.key.slice(STORAGE_PREFIX.length);
+    _notify(path);
+    const parent = path.split('/').slice(0, -1).join('/');
+    if (parent) _notify(parent);
+  });
+}
+
+// db / auth はダミー（API 互換のため引数として渡せるように）
+const db = { __mock: true };
+const auth = { get currentUser() { return { uid: userId }; } };
+
+// doc(db, ...segments) / collection(db, ...segments)
+const doc = (_db, ...segments) => ({
+  __type: 'doc',
+  segments,
+  path: segments.join('/'),
+  id: segments[segments.length - 1],
+});
+const collection = (_db, ...segments) => ({
+  __type: 'collection',
+  segments,
+  path: segments.join('/'),
+});
+
+// getDoc / setDoc
+const getDoc = async (ref) => {
+  const data = safeJsonParse(safeGetItem(buildKey(ref.segments)));
+  return {
+    exists: () => data !== null,
+    data: () => data,
+    id: ref.id,
+  };
+};
+
+const setDoc = async (ref, data) => {
+  const ok = safeSetItem(buildKey(ref.segments), JSON.stringify(data));
+  if (!ok) throw new Error('Failed to write to localStorage (quota or unavailable)');
+  _notify(ref.path);
+  const parent = ref.segments.slice(0, -1).join('/');
+  if (parent) _notify(parent);
+};
+
+// addDoc（コレクションに自動 ID で追加）
+const addDoc = async (colRef, data) => {
+  const id = genId('doc_');
+  const segments = [...colRef.segments, id];
+  const ok = safeSetItem(buildKey(segments), JSON.stringify(data));
+  if (!ok) throw new Error('Failed to write to localStorage (quota or unavailable)');
+  _notify(colRef.path);
+  return { id, path: segments.join('/'), segments };
+};
+
+// onSnapshot（ドキュメント／コレクション両対応）
+const onSnapshot = (ref, callback) => {
+  const fire = () => {
+    if (ref.__type === 'doc') {
+      const data = safeJsonParse(safeGetItem(buildKey(ref.segments)));
+      callback({
+        exists: () => data !== null,
+        data: () => data,
+        id: ref.id,
+      });
+    } else {
+      const prefix = buildKey(ref.segments) + '/';
+      const docs = [];
+      let len = 0;
+      try { len = localStorage.length; } catch (e) { len = 0; }
+      for (let i = 0; i < len; i++) {
+        let key = null;
+        try { key = localStorage.key(i); } catch (e) { continue; }
+        if (!key || !key.startsWith(prefix)) continue;
+        const rest = key.slice(prefix.length);
+        if (rest.includes('/')) continue;
+        const data = safeJsonParse(safeGetItem(key));
+        docs.push({ id: rest, data: () => data });
+      }
+      callback({
+        docs,
+        size: docs.length,
+        empty: docs.length === 0,
+        forEach: (fn) => docs.forEach(fn),
+      });
+    }
+  };
+
+  if (!_listeners.has(ref.path)) _listeners.set(ref.path, new Set());
+  _listeners.get(ref.path).add(fire);
+  fire(); // 初回実行
+  return () => {
+    const set = _listeners.get(ref.path);
+    if (!set) return;
+    set.delete(fire);
+    if (set.size === 0) _listeners.delete(ref.path); // 空 Set のメモリリーク防止
+  };
+};
+
+// writeBatch（バッチ書き込み）
+const writeBatch = (_db) => {
+  const ops = [];
+  return {
+    set: (ref, data) => { ops.push({ type: 'set', ref, data }); },
+    delete: (ref) => { ops.push({ type: 'delete', ref }); },
+    commit: async () => {
+      const touched = new Set();
+      const failed = [];
+      for (const op of ops) {
+        const key = buildKey(op.ref.segments);
+        if (op.type === 'set') {
+          const ok = safeSetItem(key, JSON.stringify(op.data));
+          if (!ok) failed.push(op.ref.path);
+        } else if (op.type === 'delete') {
+          safeRemoveItem(key);
+        }
+        touched.add(op.ref.path);
+        const parent = op.ref.segments.slice(0, -1).join('/');
+        if (parent) touched.add(parent);
+      }
+      touched.forEach(_notify);
+      if (failed.length > 0) {
+        throw new Error('Failed to write some docs to localStorage: ' + failed.join(', '));
+      }
+    },
+  };
+};
+
+// 認証 API のダミー（同期的に「ログイン済み」を返す）
+const signInAnonymously = async () => ({ user: { uid: userId } });
+const signInWithCustomToken = async () => ({ user: { uid: userId } });
+const onAuthStateChanged = (_auth, callback) => {
+  callback({ uid: userId });
+  return () => {};
+};
+
+// --- データセット ---
+
+// 【単語データ】
+// 基本問題 (これまでのデータ)
+const WORDS_BASIC = [
+  { en: "apple", ja: "りんご" }, { en: "dog", ja: "犬" }, { en: "cat", ja: "猫" }, { en: "book", ja: "本" },
+  { en: "school", ja: "学校" }, { en: "teacher", ja: "先生" }, { en: "student", ja: "生徒" }, { en: "friend", ja: "友達" },
+  { en: "house", ja: "家" }, { en: "water", ja: "水" }, { en: "food", ja: "食べ物" }, { en: "car", ja: "車" },
+  { en: "train", ja: "電車" }, { en: "station", ja: "駅" }, { en: "time", ja: "時間" }, { en: "day", ja: "日" },
+  { en: "week", ja: "週" }, { en: "month", ja: "月" }, { en: "year", ja: "年" }, { en: "morning", ja: "朝" },
+  { en: "run", ja: "走る" }, { en: "walk", ja: "歩く" }, { en: "eat", ja: "食べる" }, { en: "drink", ja: "飲む" },
+  { en: "read", ja: "読む" }, { en: "write", ja: "書く" }, { en: "listen", ja: "聞く" }, { en: "speak", ja: "話す" },
+  { en: "study", ja: "勉強する" }, { en: "play", ja: "遊ぶ・する" }, { en: "make", ja: "作る" }, { en: "use", ja: "使う" },
+  { en: "good", ja: "良い" }, { en: "bad", ja: "悪い" }, { en: "big", ja: "大きい" }, { en: "small", ja: "小さい" },
+  { en: "tall", ja: "背が高い" }, { en: "short", ja: "短い・背が低い" }, { en: "long", ja: "長い" }, { en: "new", ja: "新しい" },
+  { en: "old", ja: "古い・年をとった" }, { en: "happy", ja: "幸せな" }, { en: "sad", ja: "悲しい" }, { en: "fast", ja: "速い" },
+  { en: "always", ja: "いつも" }, { en: "usually", ja: "たいてい" }, { en: "often", ja: "よく" }, { en: "sometimes", ja: "時々" },
+  { en: "never", ja: "決して～ない" }, { en: "very", ja: "とても" },
+  { en: "family", ja: "家族" }, { en: "father", ja: "父" }, { en: "mother", ja: "母" }, { en: "brother", ja: "兄・弟" }, { en: "sister", ja: "姉・妹" },
+  { en: "parents", ja: "両親" }, { en: "child", ja: "子供" }, { en: "man", ja: "男の人" }, { en: "woman", ja: "女の人" }, { en: "boy", ja: "男の子" },
+  { en: "girl", ja: "女の子" }, { en: "people", ja: "人々" }, { en: "animal", ja: "動物" }, { en: "bird", ja: "鳥" }, { en: "fish", ja: "魚" },
+  { en: "tree", ja: "木" }, { en: "flower", ja: "花" }, { en: "sun", ja: "太陽" }, { en: "moon", ja: "月" }, { en: "star", ja: "星" },
+  { en: "sky", ja: "空" }, { en: "sea", ja: "海" }, { en: "river", ja: "川" }, { en: "mountain", ja: "山" }, { en: "rain", ja: "雨" },
+  { en: "snow", ja: "雪" }, { en: "wind", ja: "風" }, { en: "fire", ja: "火" }, { en: "earth", ja: "地球・土" }, { en: "world", ja: "世界" },
+  { en: "country", ja: "国" }, { en: "city", ja: "都市・市" }, { en: "town", ja: "町" }, { en: "village", ja: "村" }, { en: "street", ja: "通り" },
+  { en: "park", ja: "公園" }, { en: "garden", ja: "庭" }, { en: "room", ja: "部屋" }, { en: "window", ja: "窓" }, { en: "door", ja: "ドア" },
+  { en: "wall", ja: "壁" }, { en: "floor", ja: "床" }, { en: "roof", ja: "屋根" }, { en: "bed", ja: "ベッド" }, { en: "table", ja: "テーブル" },
+  { en: "chair", ja: "椅子" }, { en: "desk", ja: "机" }, { en: "pen", ja: "ペン" }, { en: "pencil", ja: "鉛筆" }, { en: "notebook", ja: "ノート" },
+  { en: "bag", ja: "かばん" }, { en: "clothes", ja: "衣服" }, { en: "shirt", ja: "シャツ" }, { en: "shoes", ja: "靴" }, { en: "hat", ja: "帽子" },
+  { en: "money", ja: "お金" }, { en: "picture", ja: "写真・絵" }, { en: "music", ja: "音楽" }, { en: "song", ja: "歌" }, { en: "movie", ja: "映画" },
+  { en: "game", ja: "ゲーム" }, { en: "sport", ja: "スポーツ" }, { en: "baseball", ja: "野球" }, { en: "soccer", ja: "サッカー" }, { en: "tennis", ja: "テニス" },
+  { en: "go", ja: "行く" }, { en: "come", ja: "来る" }, { en: "have", ja: "持っている・食べる" }, { en: "know", ja: "知っている" }, { en: "think", ja: "考える・思う" },
+  { en: "see", ja: "見る・会う" }, { en: "look", ja: "見る" }, { en: "watch", ja: "見る（動いているものを）" }, { en: "hear", ja: "聞こえる" }, 
+  { en: "say", ja: "言う" }, { en: "tell", ja: "話す・教える" }, { en: "talk", ja: "話す" }, { en: "call", ja: "呼ぶ・電話する" },
+  { en: "meet", ja: "会う" }, { en: "help", ja: "手伝う・助ける" }, { en: "work", ja: "働く" }, { en: "try", ja: "試す・努力する" }, { en: "need", ja: "必要とする" },
+  { en: "want", ja: "欲しい・～したい" }, { en: "like", ja: "好む" }, { en: "love", ja: "愛する・大好きである" }, { en: "start", ja: "始める・出発する" }, { en: "begin", ja: "始める" },
+  { en: "finish", ja: "終える" }, { en: "stop", ja: "止める・止まる" }, { en: "open", ja: "開ける・開く" }, { en: "close", ja: "閉める・閉まる" }, { en: "buy", ja: "買う" },
+  { en: "sell", ja: "売る" }, { en: "give", ja: "与える" }, { en: "take", ja: "取る・乗る" }, { en: "bring", ja: "持ってくる・連れてくる" }, { en: "show", ja: "見せる・示す" },
+  { en: "find", ja: "見つける" }, { en: "lose", ja: "失う・負ける" }, { en: "win", ja: "勝つ" }, { en: "understand", ja: "理解する" }, { en: "remember", ja: "覚えている・思い出す" },
+  { en: "forget", ja: "忘れる" }, { en: "keep", ja: "保つ・ずっと～する" }, { en: "leave", ja: "去る・残す" }, { en: "live", ja: "住む・生きる" }, { en: "stay", ja: "滞在する・とどまる" },
+  { en: "feel", ja: "感じる" }, { en: "sleep", ja: "眠る" }, { en: "wake", ja: "目を覚ます" }, { en: "stand", ja: "立つ" }, { en: "sit", ja: "座る" },
+  { en: "put", ja: "置く" }, { en: "cut", ja: "切る" }, { en: "catch", ja: "捕まえる" }, { en: "throw", ja: "投げる" }, { en: "wash", ja: "洗う" },
+  { en: "clean", ja: "きれいにする・掃除する" }, { en: "cook", ja: "料理する" }, { en: "draw", ja: "描く" }, { en: "sing", ja: "歌う" }, { en: "dance", ja: "踊る" },
+  { en: "swim", ja: "泳ぐ" }, { en: "fly", ja: "飛ぶ" }, { en: "drive", ja: "運転する" }, { en: "ride", ja: "乗る" },
+  { en: "wait", ja: "待つ" }, { en: "smile", ja: "ほほえむ" }, { en: "laugh", ja: "笑う" }, { en: "cry", ja: "泣く" },
+  { en: "beautiful", ja: "美しい" }, { en: "cute", ja: "かわいい" }, { en: "cool", ja: "涼しい・かっこいい" }, { en: "warm", ja: "暖かい" }, { en: "hot", ja: "暑い・熱い" },
+  { en: "cold", ja: "冷たい・寒い" }, { en: "hard", ja: "難しい・硬い・一生懸命に" }, { en: "easy", ja: "簡単な" }, { en: "difficult", ja: "難しい" }, { en: "important", ja: "重要な" },
+  { en: "interesting", ja: "面白い・興味深い" }, { en: "boring", ja: "退屈な" }, { en: "fun", ja: "楽しい・楽しみ" }, { en: "funny", ja: "おかしい・滑稽な" }, { en: "great", ja: "素晴らしい・偉大な" },
+  { en: "wonderful", ja: "素晴らしい" }, { en: "nice", ja: "素敵な・親切な" }, { en: "fine", ja: "元気な・立派な" }, { en: "kind", ja: "親切な・種類" }, { en: "young", ja: "若い" },
+  { en: "right", ja: "正しい・右" }, { en: "wrong", ja: "間違った" }, { en: "true", ja: "本当の" }, { en: "false", ja: "偽りの" }, { en: "same", ja: "同じ" },
+  { en: "different", ja: "違う・異なる" }, { en: "early", ja: "早い・早く" }, { en: "late", ja: "遅れた・遅く" }, { en: "high", ja: "高い" }, { en: "low", ja: "低い" },
+  { en: "strong", ja: "強い" }, { en: "weak", ja: "弱い" }, { en: "heavy", ja: "重い" }, { en: "light", ja: "軽い・明るい・光" }, { en: "dark", ja: "暗い" },
+  { en: "bright", ja: "明るい" }, { en: "busy", ja: "忙しい" }, { en: "free", ja: "自由な・暇な・無料の" }, { en: "careful", ja: "注意深い" }, { en: "popular", ja: "人気のある" },
+  { en: "famous", ja: "有名な" }, { en: "ready", ja: "準備ができた" }, { en: "sorry", ja: "すまなく思って・気の毒で" }, { en: "glad", ja: "うれしい" }, { en: "tired", ja: "疲れた" },
+  { en: "sick", ja: "病気の" }, { en: "well", ja: "健康な・上手に・ええと" }, { en: "really", ja: "本当に" }, { en: "too", ja: "～もまた・あまりに～すぎる" }, { en: "also", ja: "～もまた" },
+  { en: "just", ja: "ちょうど・ただ～だけ" }, { en: "only", ja: "～だけ・唯一の" }, { en: "even", ja: "～でさえ" }, { en: "still", ja: "まだ・なお" }, { en: "yet", ja: "（否定文で）まだ・（疑問文で）もう" },
+  { en: "already", ja: "すでに" }, { en: "soon", ja: "すぐに" }, { en: "then", ja: "その時・それから" }, { en: "now", ja: "今" }, { en: "here", ja: "ここに・ここで" },
+  { en: "there", ja: "そこに・そこで" }, { en: "up", ja: "上へ" }, { en: "down", ja: "下へ" }, { en: "out", ja: "外へ" }, { en: "in", ja: "中に" },
+  { en: "away", ja: "離れて" }, { en: "far", ja: "遠くへ" }, { en: "near", ja: "近くに" }, { en: "together", ja: "一緒に" }, { en: "again", ja: "再び・また" },
+  { en: "I", ja: "私は" }, { en: "my", ja: "私の" }, { en: "me", ja: "私を・私に" }, { en: "mine", ja: "私のもの" },
+  { en: "you", ja: "あなたは・あなたを" }, { en: "your", ja: "あなたの" }, { en: "yours", ja: "あなたのもの" },
+  { en: "he", ja: "彼は" }, { en: "his", ja: "彼の・彼のもの" }, { en: "him", ja: "彼を・彼に" },
+  { en: "she", ja: "彼女は" }, { en: "her", ja: "彼女の・彼女を・彼女に" }, { en: "hers", ja: "彼女のもの" },
+  { en: "it", ja: "それは・それを・それに" }, { en: "its", ja: "それの" },
+  { en: "we", ja: "私たちは" }, { en: "our", ja: "私たちの" }, { en: "us", ja: "私たちを・私たちに" }, { en: "ours", ja: "私たちのもの" },
+  { en: "they", ja: "彼らは・それらは" }, { en: "their", ja: "彼らの・それらの" }, { en: "them", ja: "彼らを・それらを" }, { en: "theirs", ja: "彼らのもの・それらのもの" },
+  { en: "this", ja: "これ・この" }, { en: "that", ja: "あれ・あの・それ・その" }, { en: "these", ja: "これら・これらの" }, { en: "those", ja: "あれら・あれらの" },
+  { en: "what", ja: "何・何の" }, { en: "who", ja: "誰" }, { en: "whose", ja: "誰の・誰のもの" }, { en: "which", ja: "どちら・どれ・どの" }, { en: "when", ja: "いつ" },
+  { en: "where", ja: "どこ" }, { en: "why", ja: "なぜ" }, { en: "how", ja: "どのように・どれくらい" },
+  { en: "some", ja: "いくつかの・いくらかの" }, { en: "any", ja: "いくつかの・１つも（～ない）" }, { en: "many", ja: "多くの（数）" }, { en: "much", ja: "多くの（量）" }, { en: "few", ja: "少しある・ほとんどない" },
+  { en: "little", ja: "少しある・ほとんどない・小さい" }, { en: "all", ja: "すべての" }, { en: "each", ja: "それぞれの" }, { en: "every", ja: "すべての・どの～も" }, { en: "other", ja: "他の" },
+  { en: "another", ja: "もう１つの・別の" }, { en: "both", ja: "両方の" },
+  { en: "about", ja: "～について・約" }, { en: "after", ja: "～のあとに" }, { en: "before", ja: "～の前に" }, { en: "at", ja: "～で・～に" }, { en: "by", ja: "～のそばに・～によって" },
+  { en: "for", ja: "～のために・～の間" }, { en: "from", ja: "～から" }, { en: "of", ja: "～の・～の中で" }, { en: "on", ja: "～の上に・～に" },
+  { en: "to", ja: "～へ・～に" }, { en: "with", ja: "～と一緒に・～を使って" }, { en: "without", ja: "～なしで" }, { en: "under", ja: "～の下に" }, { en: "over", ja: "～を越えて・～の上に" },
+  { en: "between", ja: "～の間に" }, { en: "among", ja: "～の間に（３つ以上）" }, { en: "during", ja: "～の間（期間）" }, { en: "through", ja: "～を通って" }, { en: "into", ja: "～の中へ" },
+  { en: "out of", ja: "～の外へ" }, { en: "around", ja: "～の周りに" }, { en: "across", ja: "～を横切って" }, { en: "along", ja: "～に沿って" }, { en: "behind", ja: "～の後ろに" },
+  { en: "and", ja: "そして・～と" }, { en: "but", ja: "しかし" }, { en: "or", ja: "または" }, { en: "because", ja: "～だから" }, { en: "if", ja: "もし～なら" },
+  { en: "while", ja: "～する間に" }, { en: "though", ja: "～だけれども" }, { en: "although", ja: "～だけれども" }, { en: "as", ja: "～として・～のように" }, { en: "than", ja: "～よりも" },
+  { en: "one", ja: "1" }, { en: "two", ja: "2" }, { en: "three", ja: "3" }, { en: "four", ja: "4" }, { en: "five", ja: "5" },
+  { en: "six", ja: "6" }, { en: "seven", ja: "7" }, { en: "eight", ja: "8" }, { en: "nine", ja: "9" }, { en: "ten", ja: "10" },
+  { en: "hundred", ja: "100" }, { en: "thousand", ja: "1000" }, { en: "million", ja: "100万" },
+  { en: "Sunday", ja: "日曜日" }, { en: "Monday", ja: "月曜日" }, { en: "Tuesday", ja: "火曜日" }, { en: "Wednesday", ja: "水曜日" }, { en: "Thursday", ja: "木曜日" }, { en: "Friday", ja: "金曜日" }, { en: "Saturday", ja: "土曜日" },
+  { en: "January", ja: "1月" }, { en: "February", ja: "2月" }, { en: "March", ja: "3月" }, { en: "April", ja: "4月" }, { en: "May", ja: "5月" }, { en: "June", ja: "6月" },
+  { en: "July", ja: "7月" }, { en: "August", ja: "8月" }, { en: "September", ja: "9月" }, { en: "October", ja: "10月" }, { en: "November", ja: "11月" }, { en: "December", ja: "12月" },
+  { en: "spring", ja: "春" }, { en: "summer", ja: "夏" }, { en: "fall", ja: "秋" }, { en: "autumn", ja: "秋" }, { en: "winter", ja: "冬" },
+  { en: "red", ja: "赤" }, { en: "blue", ja: "青" }, { en: "yellow", ja: "黄" }, { en: "green", ja: "緑" }, { en: "black", ja: "黒" }, { en: "white", ja: "白" }, { en: "brown", ja: "茶" }
+];
+
+// 発展問題 Lv.1 (小学校〜中1レベル 300問)
+const WORDS_LEVEL1 = [
+  { en: "orange", ja: "オレンジ" }, { en: "purple", ja: "紫" }, { en: "pink", ja: "ピンク" }, { en: "gray", ja: "灰色" }, { en: "pig", ja: "豚" }, { en: "cow", ja: "牛" }, { en: "horse", ja: "馬" }, { en: "sheep", ja: "羊" }, { en: "monkey", ja: "猿" }, { en: "lion", ja: "ライオン" },
+  { en: "tiger", ja: "トラ" }, { en: "elephant", ja: "象" }, { en: "fox", ja: "キツネ" }, { en: "rabbit", ja: "ウサギ" }, { en: "deer", ja: "鹿" }, { en: "bear", ja: "クマ" }, { en: "panda", ja: "パンダ" }, { en: "mouse", ja: "ネズミ" }, { en: "snake", ja: "ヘビ" }, { en: "frog", ja: "カエル" },
+  { en: "banana", ja: "バナナ" }, { en: "grape", ja: "ブドウ" }, { en: "peach", ja: "桃" }, { en: "melon", ja: "メロン" }, { en: "strawberry", ja: "イチゴ" }, { en: "lemon", ja: "レモン" }, { en: "cherry", ja: "サクランボ" }, { en: "meat", ja: "肉" }, { en: "beef", ja: "牛肉" }, { en: "pork", ja: "豚肉" },
+  { en: "chicken", ja: "鶏肉" }, { en: "egg", ja: "卵" }, { en: "milk", ja: "牛乳" }, { en: "juice", ja: "ジュース" }, { en: "tea", ja: "お茶" }, { en: "coffee", ja: "コーヒー" }, { en: "soup", ja: "スープ" }, { en: "cake", ja: "ケーキ" }, { en: "pie", ja: "パイ" }, { en: "cookie", ja: "クッキー" },
+  { en: "chocolate", ja: "チョコレート" }, { en: "ice cream", ja: "アイスクリーム" }, { en: "sugar", ja: "砂糖" }, { en: "salt", ja: "塩" }, { en: "pepper", ja: "コショウ" }, { en: "potato", ja: "ジャガイモ" }, { en: "tomato", ja: "トマト" }, { en: "onion", ja: "玉ねぎ" }, { en: "carrot", ja: "ニンジン" }, { en: "bread", ja: "パン" },
+  { en: "butter", ja: "バター" }, { en: "cheese", ja: "チーズ" }, { en: "rice", ja: "米・ご飯" }, { en: "vegetable", ja: "野菜" }, { en: "fruit", ja: "果物" }, { en: "head", ja: "頭" }, { en: "face", ja: "顔" }, { en: "eye", ja: "目" }, { en: "ear", ja: "耳" }, { en: "nose", ja: "鼻" },
+  { en: "mouth", ja: "口" }, { en: "tooth", ja: "歯" }, { en: "hair", ja: "髪" }, { en: "hand", ja: "手" }, { en: "arm", ja: "腕" }, { en: "leg", ja: "脚" }, { en: "foot", ja: "足" }, { en: "finger", ja: "指" }, { en: "shoulder", ja: "肩" }, { en: "neck", ja: "首" },
+  { en: "back", ja: "背中" }, { en: "heart", ja: "心・心臓" }, { en: "stomach", ja: "胃" }, { en: "body", ja: "体" }, { en: "blood", ja: "血" }, { en: "bone", ja: "骨" }, { en: "pants", ja: "ズボン" }, { en: "skirt", ja: "スカート" }, { en: "dress", ja: "ドレス" }, { en: "sweater", ja: "セーター" },
+  { en: "jacket", ja: "ジャケット" }, { en: "coat", ja: "コート" }, { en: "sock", ja: "靴下" }, { en: "glove", ja: "手袋" }, { en: "cap", ja: "帽子" }, { en: "belt", ja: "ベルト" }, { en: "pocket", ja: "ポケット" }, { en: "uniform", ja: "制服" }, { en: "uncle", ja: "おじ" }, { en: "aunt", ja: "おば" },
+  { en: "cousin", ja: "いとこ" }, { en: "grandfather", ja: "祖父" }, { en: "grandmother", ja: "祖母" }, { en: "grand", ja: "壮大な" }, { en: "husband", ja: "夫" }, { en: "wife", ja: "妻" }, { en: "member", ja: "メンバー・一員" }, { en: "king", ja: "王" }, { en: "queen", ja: "女王" }, { en: "map", ja: "地図" },
+  { en: "chalk", ja: "チョーク" }, { en: "eraser", ja: "消しゴム" }, { en: "ruler", ja: "定規" }, { en: "textbook", ja: "教科書" }, { en: "dictionary", ja: "辞書" }, { en: "blackboard", ja: "黒板" }, { en: "subject", ja: "科目" }, { en: "math", ja: "数学" }, { en: "science", ja: "理科" }, { en: "history", ja: "歴史" },
+  { en: "english", ja: "英語" }, { en: "art", ja: "美術" }, { en: "gym", ja: "体育館" }, { en: "club", ja: "クラブ" }, { en: "class", ja: "授業・クラス" }, { en: "homework", ja: "宿題" }, { en: "test", ja: "テスト" }, { en: "exam", ja: "試験" }, { en: "question", ja: "質問" }, { en: "answer", ja: "答え・答える" },
+  { en: "kitchen", ja: "台所" }, { en: "bathroom", ja: "浴室" }, { en: "toilet", ja: "トイレ" }, { en: "living room", ja: "居間" }, { en: "yard", ja: "庭・中庭" }, { en: "gate", ja: "門" }, { en: "hall", ja: "会館・廊下" }, { en: "stairs", ja: "階段" }, { en: "library", ja: "図書館" }, { en: "hospital", ja: "病院" },
+  { en: "bank", ja: "銀行" }, { en: "post office", ja: "郵便局" }, { en: "store", ja: "店" }, { en: "shop", ja: "店" }, { en: "supermarket", ja: "スーパー" }, { en: "restaurant", ja: "レストラン" }, { en: "museum", ja: "博物館" }, { en: "temple", ja: "寺" }, { en: "shrine", ja: "神社" }, { en: "church", ja: "教会" },
+  { en: "plant", ja: "植物" }, { en: "leaf", ja: "葉" }, { en: "root", ja: "根" }, { en: "wood", ja: "木材" }, { en: "rock", ja: "岩" }, { en: "stone", ja: "石" }, { en: "sand", ja: "砂" }, { en: "grass", ja: "草" }, { en: "ground", ja: "地面" }, { en: "space", ja: "宇宙・空間" },
+  { en: "planet", ja: "惑星" }, { en: "ice", ja: "氷" }, { en: "cloud", ja: "雲" }, { en: "bus", ja: "バス" }, { en: "taxi", ja: "タクシー" }, { en: "ship", ja: "船" }, { en: "plane", ja: "飛行機" }, { en: "boat", ja: "ボート" }, { en: "bike", ja: "自転車" }, { en: "ticket", ja: "切符" },
+  { en: "trip", ja: "旅行" }, { en: "tour", ja: "旅行" }, { en: "travel", ja: "旅行する" }, { en: "camp", ja: "キャンプ" }, { en: "doctor", ja: "医者" }, { en: "nurse", ja: "看護師" }, { en: "pilot", ja: "パイロット" }, { en: "farmer", ja: "農家" }, { en: "singer", ja: "歌手" }, { en: "player", ja: "選手" },
+  { en: "police", ja: "警察" }, { en: "officer", ja: "役人・警官" }, { en: "engineer", ja: "技術者" }, { en: "clerk", ja: "店員・事務員" }, { en: "pet", ja: "ペット" }, { en: "clock", ja: "時計" }, { en: "camera", ja: "カメラ" }, { en: "radio", ja: "ラジオ" }, { en: "television", ja: "テレビ" }, { en: "computer", ja: "コンピューター" },
+  { en: "internet", ja: "インターネット" }, { en: "phone", ja: "電話" }, { en: "card", ja: "カード" }, { en: "letter", ja: "手紙" }, { en: "news", ja: "知らせ" }, { en: "story", ja: "物語" }, { en: "idea", ja: "考え" }, { en: "plan", ja: "計画" }, { en: "rule", ja: "規則" }, { en: "way", ja: "道・方法" },
+  { en: "part", ja: "部分" }, { en: "type", ja: "種類" }, { en: "half", ja: "半分" }, { en: "piece", ja: "一つ・かけら" }, { en: "pair", ja: "一対・ペア" }, { en: "circle", ja: "円" }, { en: "square", ja: "正方形" }, { en: "shape", ja: "形" }, { en: "round", ja: "丸い" }, { en: "flat", ja: "平らな" },
+  { en: "sharp", ja: "鋭い" }, { en: "soft", ja: "柔らかい" }, { en: "dry", ja: "乾いた" }, { en: "wet", ja: "濡れた" }, { en: "dirty", ja: "汚い" }, { en: "rich", ja: "裕福な" }, { en: "poor", ja: "貧しい" }, { en: "thick", ja: "厚い" }, { en: "thin", ja: "薄い" }, { en: "wide", ja: "広い" },
+  { en: "narrow", ja: "狭い" }, { en: "deep", ja: "深い" }, { en: "shallow", ja: "浅い" }, { en: "slow", ja: "遅い" }, { en: "loud", ja: "うるさい" }, { en: "quiet", ja: "静かな" }, { en: "clear", ja: "明確な・晴れた" }, { en: "empty", ja: "空の" }, { en: "full", ja: "いっぱいの" }, { en: "safe", ja: "安全な" },
+  { en: "dangerous", ja: "危険な" }, { en: "sweet", ja: "甘い" }, { en: "sour", ja: "酸っぱい" }, { en: "bitter", ja: "苦い" }, { en: "spicy", ja: "辛い" }, { en: "hungry", ja: "空腹の" }, { en: "thirsty", ja: "喉が渇いた" }, { en: "sleepy", ja: "眠い" }, { en: "fat", ja: "太った" }, { en: "clever", ja: "賢い" },
+  { en: "smart", ja: "賢い" }, { en: "stupid", ja: "愚かな" }, { en: "brave", ja: "勇敢な" }, { en: "shy", ja: "内気な" }, { en: "angry", ja: "怒った" }, { en: "ask", ja: "尋ねる" }, { en: "build", ja: "建てる" }, { en: "carry", ja: "運ぶ" }, { en: "change", ja: "変える" }, { en: "check", ja: "確認する" },
+  { en: "choose", ja: "選ぶ" }, { en: "climb", ja: "登る" }, { en: "collect", ja: "集める" }, { en: "copy", ja: "コピーする" }, { en: "cover", ja: "覆う" }, { en: "cross", ja: "横切る" }, { en: "decide", ja: "決める" }, { en: "drop", ja: "落とす" }, { en: "fall", ja: "落ちる" }, { en: "fill", ja: "満たす" },
+  { en: "grow", ja: "成長する" }, { en: "guess", ja: "推測する" }, { en: "happen", ja: "起こる" }, { en: "hit", ja: "打つ" }, { en: "hold", ja: "持つ" }, { en: "hope", ja: "希望する" }, { en: "hurry", ja: "急ぐ" }, { en: "invite", ja: "招待する" }, { en: "join", ja: "参加する" }, { en: "jump", ja: "跳ぶ" },
+  { en: "kick", ja: "蹴る" }, { en: "kill", ja: "殺す" }, { en: "kiss", ja: "キスする" }, { en: "knock", ja: "ノックする" }, { en: "learn", ja: "学ぶ" }, { en: "let", ja: "～させる" }, { en: "mean", ja: "意味する" }, { en: "miss", ja: "逃す・寂しく思う" }, { en: "move", ja: "動く" }, { en: "paint", ja: "塗る" },
+  { en: "pass", ja: "通り過ぎる・渡す" }, { en: "pay", ja: "支払う" }, { en: "pick", ja: "選ぶ・摘む" }, { en: "point", ja: "指さす" }, { en: "pull", ja: "引く" }, { en: "push", ja: "押す" }, { en: "reach", ja: "到着する" }, { en: "return", ja: "戻る" }, { en: "ring", ja: "鳴る" }, { en: "save", ja: "救う・貯める" },
+  { en: "send", ja: "送る" }, { en: "set", ja: "置く・設定する" }, { en: "shout", ja: "叫ぶ" }, { en: "smell", ja: "においがする" }, { en: "sound", ja: "聞こえる・音" }, { en: "spell", ja: "つづる" }, { en: "spend", ja: "費やす" }, { en: "step", ja: "歩む・一歩" }, { en: "strike", ja: "打つ" }, { en: "taste", ja: "味がする" },
+  { en: "teach", ja: "教える" }, { en: "thank", ja: "感謝する" }, { en: "touch", ja: "触れる" }, { en: "turn", ja: "回る・曲がる" }, { en: "visit", ja: "訪問する" }, { en: "wear", ja: "着ている" }, { en: "welcome", ja: "歓迎する" }, { en: "wish", ja: "願う" }, { en: "worry", ja: "心配する" }, { en: "agree", ja: "同意する" }
+];
+
+// 発展問題 Lv.2 (中学2年レベル 300問: A〜Z をバランス良く配置／基本・Lv.1と非重複)
+const WORDS_LEVEL2 = [
+  // A (20)
+  { en: "abroad", ja: "海外へ" }, { en: "accept", ja: "受け入れる" }, { en: "accident", ja: "事故" }, { en: "act", ja: "行動する" }, { en: "action", ja: "行動" }, { en: "active", ja: "活動的な" }, { en: "actually", ja: "実際に" }, { en: "address", ja: "住所" }, { en: "advice", ja: "助言" }, { en: "afraid", ja: "恐れて" },
+  { en: "against", ja: "〜に反対して" }, { en: "ago", ja: "〜前に" }, { en: "ahead", ja: "前方に" }, { en: "alive", ja: "生きて" }, { en: "allow", ja: "許可する" }, { en: "alone", ja: "ひとりで" }, { en: "amount", ja: "量" }, { en: "apartment", ja: "アパート" }, { en: "appear", ja: "現れる" }, { en: "area", ja: "地域" },
+  // B (18)
+  { en: "bake", ja: "焼く" }, { en: "balloon", ja: "風船" }, { en: "band", ja: "楽団" }, { en: "base", ja: "基礎" }, { en: "basic", ja: "基本的な" }, { en: "battle", ja: "戦い" }, { en: "beauty", ja: "美しさ" }, { en: "become", ja: "〜になる" }, { en: "behavior", ja: "振る舞い" }, { en: "believe", ja: "信じる" },
+  { en: "belong", ja: "属する" }, { en: "below", ja: "〜の下に" }, { en: "borrow", ja: "借りる" }, { en: "bottom", ja: "底" }, { en: "brain", ja: "脳" }, { en: "branch", ja: "枝・支店" }, { en: "breath", ja: "息" }, { en: "bridge", ja: "橋" },
+  // C (22)
+  { en: "calm", ja: "穏やかな" }, { en: "care", ja: "世話" }, { en: "case", ja: "場合" }, { en: "cause", ja: "原因" }, { en: "celebrate", ja: "祝う" }, { en: "center", ja: "中心" }, { en: "century", ja: "世紀" }, { en: "chance", ja: "機会" }, { en: "character", ja: "性格" }, { en: "cheap", ja: "安い" },
+  { en: "cheer", ja: "応援する" }, { en: "chemistry", ja: "化学" }, { en: "choice", ja: "選択" }, { en: "classmate", ja: "クラスメート" }, { en: "college", ja: "大学" }, { en: "common", ja: "共通の" }, { en: "continue", ja: "続ける" }, { en: "contest", ja: "競技会" }, { en: "couple", ja: "一対" }, { en: "courage", ja: "勇気" },
+  { en: "create", ja: "作り出す" }, { en: "culture", ja: "文化" },
+  // D (16)
+  { en: "daily", ja: "毎日の" }, { en: "damage", ja: "損害" }, { en: "danger", ja: "危険" }, { en: "data", ja: "データ" }, { en: "date", ja: "日付" }, { en: "dead", ja: "死んでいる" }, { en: "deal", ja: "扱う" }, { en: "death", ja: "死" }, { en: "deliver", ja: "配達する" }, { en: "design", ja: "デザイン" },
+  { en: "destroy", ja: "破壊する" }, { en: "detail", ja: "詳細" }, { en: "develop", ja: "発達させる" }, { en: "die", ja: "死ぬ" }, { en: "direction", ja: "方向" }, { en: "discover", ja: "発見する" },
+  // E (15)
+  { en: "easily", ja: "簡単に" }, { en: "east", ja: "東" }, { en: "education", ja: "教育" }, { en: "effort", ja: "努力" }, { en: "energy", ja: "エネルギー" }, { en: "enough", ja: "十分な" }, { en: "enter", ja: "入る" }, { en: "environment", ja: "環境" }, { en: "especially", ja: "特に" }, { en: "evening", ja: "夕方" },
+  { en: "event", ja: "出来事" }, { en: "example", ja: "例" }, { en: "exchange", ja: "交換する" }, { en: "exercise", ja: "運動・練習" }, { en: "experience", ja: "経験" },
+  // F (14)
+  { en: "fact", ja: "事実" }, { en: "factory", ja: "工場" }, { en: "farm", ja: "農場" }, { en: "favorite", ja: "お気に入りの" }, { en: "feeling", ja: "感情" }, { en: "festival", ja: "祭り" }, { en: "field", ja: "分野・野原" }, { en: "fight", ja: "戦う" }, { en: "finally", ja: "ついに" }, { en: "flag", ja: "旗" },
+  { en: "foreign", ja: "外国の" }, { en: "forest", ja: "森" }, { en: "freedom", ja: "自由" }, { en: "future", ja: "未来" },
+  // G (11)
+  { en: "garbage", ja: "ごみ" }, { en: "gather", ja: "集める" }, { en: "general", ja: "一般的な" }, { en: "gentle", ja: "優しい" }, { en: "gift", ja: "贈り物" }, { en: "glass", ja: "ガラス・コップ" }, { en: "goal", ja: "目標" }, { en: "grade", ja: "学年・成績" }, { en: "graduate", ja: "卒業する" }, { en: "group", ja: "グループ" },
+  { en: "guest", ja: "客" },
+  // H (10)
+  { en: "habit", ja: "習慣" }, { en: "harvest", ja: "収穫" }, { en: "health", ja: "健康" }, { en: "hero", ja: "英雄" }, { en: "hide", ja: "隠す" }, { en: "hill", ja: "丘" }, { en: "hobby", ja: "趣味" }, { en: "holiday", ja: "休日" }, { en: "however", ja: "しかしながら" }, { en: "human", ja: "人間" },
+  // I (14)
+  { en: "image", ja: "イメージ" }, { en: "imagine", ja: "想像する" }, { en: "improve", ja: "改善する" }, { en: "include", ja: "含む" }, { en: "increase", ja: "増える" }, { en: "industry", ja: "産業" }, { en: "information", ja: "情報" }, { en: "inside", ja: "内側" }, { en: "instead", ja: "代わりに" }, { en: "interview", ja: "面接" },
+  { en: "introduce", ja: "紹介する" }, { en: "invent", ja: "発明する" }, { en: "invention", ja: "発明" }, { en: "island", ja: "島" },
+  // J (4)
+  { en: "job", ja: "仕事" }, { en: "joke", ja: "冗談" }, { en: "journey", ja: "旅行" }, { en: "joy", ja: "喜び" },
+  // K (4)
+  { en: "key", ja: "鍵" }, { en: "kid", ja: "子供" }, { en: "knee", ja: "膝" }, { en: "knowledge", ja: "知識" },
+  // L (12)
+  { en: "lake", ja: "湖" }, { en: "land", ja: "土地" }, { en: "language", ja: "言語" }, { en: "later", ja: "後で" }, { en: "law", ja: "法律" }, { en: "leader", ja: "指導者" }, { en: "lesson", ja: "授業" }, { en: "level", ja: "レベル" }, { en: "life", ja: "生活" }, { en: "line", ja: "線" },
+  { en: "lonely", ja: "孤独な" }, { en: "lucky", ja: "幸運な" },
+  // M (15)
+  { en: "machine", ja: "機械" }, { en: "magazine", ja: "雑誌" }, { en: "mail", ja: "郵便" }, { en: "main", ja: "主な" }, { en: "manager", ja: "支配人" }, { en: "marathon", ja: "マラソン" }, { en: "marry", ja: "結婚する" }, { en: "match", ja: "試合" }, { en: "material", ja: "材料" }, { en: "matter", ja: "問題・重要である" },
+  { en: "maybe", ja: "たぶん" }, { en: "memory", ja: "記憶" }, { en: "message", ja: "伝言" }, { en: "middle", ja: "中央" }, { en: "mistake", ja: "間違い" },
+  // N (10)
+  { en: "nation", ja: "国家" }, { en: "natural", ja: "自然の" }, { en: "nature", ja: "自然" }, { en: "nearby", ja: "近くの" }, { en: "necessary", ja: "必要な" }, { en: "neighbor", ja: "近所の人" }, { en: "nervous", ja: "緊張した" }, { en: "newspaper", ja: "新聞" }, { en: "noise", ja: "騒音" }, { en: "normal", ja: "標準の" },
+  // O (10)
+  { en: "ocean", ja: "海洋" }, { en: "offer", ja: "提供する" }, { en: "office", ja: "事務所" }, { en: "oil", ja: "油・石油" }, { en: "once", ja: "一度" }, { en: "opinion", ja: "意見" }, { en: "order", ja: "注文・命令" }, { en: "original", ja: "独創的な" }, { en: "outside", ja: "外側" }, { en: "owner", ja: "所有者" },
+  // P (19)
+  { en: "package", ja: "包み" }, { en: "page", ja: "ページ" }, { en: "pain", ja: "痛み" }, { en: "paper", ja: "紙" }, { en: "party", ja: "パーティー" }, { en: "peace", ja: "平和" }, { en: "perfect", ja: "完璧な" }, { en: "perhaps", ja: "たぶん" }, { en: "person", ja: "人" }, { en: "photo", ja: "写真" },
+  { en: "place", ja: "場所" }, { en: "plastic", ja: "プラスチック" }, { en: "poem", ja: "詩" }, { en: "polite", ja: "礼儀正しい" }, { en: "position", ja: "位置" }, { en: "possible", ja: "可能な" }, { en: "power", ja: "力" }, { en: "practice", ja: "練習" }, { en: "prepare", ja: "準備する" },
+  // Q (4)
+  { en: "quick", ja: "速い" }, { en: "quickly", ja: "素早く" }, { en: "quite", ja: "まったく" }, { en: "quiz", ja: "小テスト" },
+  // R (12)
+  { en: "race", ja: "競争・人種" }, { en: "raise", ja: "上げる" }, { en: "reason", ja: "理由" }, { en: "receive", ja: "受け取る" }, { en: "recently", ja: "最近" }, { en: "record", ja: "記録" }, { en: "recycle", ja: "再利用する" }, { en: "region", ja: "地域" }, { en: "repeat", ja: "繰り返す" }, { en: "reply", ja: "返事" },
+  { en: "report", ja: "報告" }, { en: "result", ja: "結果" },
+  // S (25)
+  { en: "sale", ja: "販売" }, { en: "scene", ja: "場面" }, { en: "search", ja: "探す" }, { en: "season", ja: "季節" }, { en: "seat", ja: "座席" }, { en: "second", ja: "2番目" }, { en: "secret", ja: "秘密" }, { en: "sense", ja: "感覚" }, { en: "sentence", ja: "文" }, { en: "separate", ja: "分ける" },
+  { en: "several", ja: "いくつかの" }, { en: "share", ja: "共有する" }, { en: "sight", ja: "光景" }, { en: "silent", ja: "静かな" }, { en: "similar", ja: "似ている" }, { en: "since", ja: "〜以来" }, { en: "single", ja: "単一の" }, { en: "situation", ja: "状況" }, { en: "size", ja: "大きさ" }, { en: "skill", ja: "技術" },
+  { en: "social", ja: "社会の" }, { en: "society", ja: "社会" }, { en: "solve", ja: "解決する" }, { en: "south", ja: "南" }, { en: "special", ja: "特別な" },
+  // T (15)
+  { en: "tail", ja: "尾" }, { en: "target", ja: "標的" }, { en: "technology", ja: "技術" }, { en: "telephone", ja: "電話" }, { en: "term", ja: "期間・用語" }, { en: "terrible", ja: "ひどい" }, { en: "tiny", ja: "とても小さい" }, { en: "title", ja: "題名" }, { en: "tonight", ja: "今夜" }, { en: "tool", ja: "道具" },
+  { en: "top", ja: "頂上" }, { en: "topic", ja: "話題" }, { en: "total", ja: "合計の" }, { en: "tradition", ja: "伝統" }, { en: "traffic", ja: "交通" },
+  // U (8)
+  { en: "ugly", ja: "醜い" }, { en: "unable", ja: "〜できない" }, { en: "unique", ja: "独特の" }, { en: "unit", ja: "単位" }, { en: "universe", ja: "宇宙" }, { en: "university", ja: "大学" }, { en: "unusual", ja: "普通でない" }, { en: "useful", ja: "役に立つ" },
+  // V (6)
+  { en: "valley", ja: "谷" }, { en: "value", ja: "価値" }, { en: "various", ja: "様々な" }, { en: "voice", ja: "声" }, { en: "volunteer", ja: "ボランティア" }, { en: "vote", ja: "投票する" },
+  // W (13)
+  { en: "war", ja: "戦争" }, { en: "waste", ja: "無駄にする" }, { en: "weather", ja: "天気" }, { en: "wedding", ja: "結婚式" }, { en: "weekend", ja: "週末" }, { en: "weight", ja: "重さ" }, { en: "west", ja: "西" }, { en: "whether", ja: "〜かどうか" }, { en: "whole", ja: "全体の" }, { en: "wild", ja: "野生の" },
+  { en: "winner", ja: "勝者" }, { en: "wonder", ja: "不思議に思う" }, { en: "worker", ja: "労働者" },
+  // Y (2)
+  { en: "youth", ja: "若者" }, { en: "yourself", ja: "あなた自身" },
+  // Z (1)
+  { en: "zero", ja: "ゼロ" }
+];
+
+// 発展問題 Lv.3 (中学3年レベル 約300問: A〜Z をバランス良く配置／基本・Lv.1・Lv.2と非重複)
+const WORDS_LEVEL3 = [
+  // A (20)
+  { en: "ability", ja: "能力" }, { en: "achieve", ja: "達成する" }, { en: "achievement", ja: "達成・業績" }, { en: "activity", ja: "活動" }, { en: "adult", ja: "大人" }, { en: "adventure", ja: "冒険" }, { en: "advise", ja: "助言する" }, { en: "agency", ja: "代理店" }, { en: "airport", ja: "空港" }, { en: "almost", ja: "ほとんど" },
+  { en: "ancient", ja: "古代の" }, { en: "announce", ja: "発表する" }, { en: "appreciate", ja: "感謝する" }, { en: "approach", ja: "近づく" }, { en: "asleep", ja: "眠って" }, { en: "athlete", ja: "運動選手" }, { en: "attention", ja: "注意" }, { en: "audience", ja: "観衆" }, { en: "available", ja: "利用できる" }, { en: "average", ja: "平均" },
+  // B (18)
+  { en: "backpack", ja: "リュックサック" }, { en: "balance", ja: "バランス" }, { en: "basis", ja: "基礎" }, { en: "behave", ja: "振る舞う" }, { en: "beside", ja: "〜のそばに" }, { en: "beyond", ja: "〜の向こうに" }, { en: "blanket", ja: "毛布" }, { en: "blow", ja: "吹く" }, { en: "breathe", ja: "呼吸する" }, { en: "broad", ja: "広い" },
+  { en: "business", ja: "仕事・商売" }, { en: "button", ja: "ボタン" }, { en: "burn", ja: "燃える" }, { en: "beginning", ja: "始まり" }, { en: "blossom", ja: "花が咲く" }, { en: "board", ja: "板・委員会" }, { en: "bother", ja: "悩ます" }, { en: "breakfast", ja: "朝食" },
+  // C (22)
+  { en: "cabinet", ja: "戸棚・内閣" }, { en: "capital", ja: "首都・資本" }, { en: "career", ja: "経歴" }, { en: "ceiling", ja: "天井" }, { en: "certain", ja: "確かな" }, { en: "challenge", ja: "挑戦" }, { en: "chapter", ja: "章" }, { en: "charge", ja: "請求する・充電" }, { en: "chief", ja: "主要な・長" }, { en: "citizen", ja: "市民" },
+  { en: "climate", ja: "気候" }, { en: "coach", ja: "コーチ" }, { en: "comfort", ja: "快適" }, { en: "community", ja: "地域社会" }, { en: "compete", ja: "競争する" }, { en: "conclude", ja: "結論を出す" }, { en: "condition", ja: "状態・条件" }, { en: "confident", ja: "自信のある" }, { en: "conversation", ja: "会話" }, { en: "cooperate", ja: "協力する" },
+  { en: "count", ja: "数える" }, { en: "council", ja: "評議会" },
+  // D (16)
+  { en: "debate", ja: "討論" }, { en: "decade", ja: "10年間" }, { en: "decrease", ja: "減少する" }, { en: "deeply", ja: "深く" }, { en: "delay", ja: "遅らせる" }, { en: "delicious", ja: "おいしい" }, { en: "depend", ja: "頼る" }, { en: "describe", ja: "描写する" }, { en: "desert", ja: "砂漠" }, { en: "desire", ja: "望む" },
+  { en: "dessert", ja: "デザート" }, { en: "determine", ja: "決定する" }, { en: "diary", ja: "日記" }, { en: "difference", ja: "違い" }, { en: "disagree", ja: "意見が合わない" }, { en: "distance", ja: "距離" },
+  // E (15)
+  { en: "earn", ja: "稼ぐ" }, { en: "earthquake", ja: "地震" }, { en: "edge", ja: "縁" }, { en: "effective", ja: "効果的な" }, { en: "elderly", ja: "年配の" }, { en: "elect", ja: "選挙する" }, { en: "elementary", ja: "初等の" }, { en: "emergency", ja: "緊急事態" }, { en: "emotion", ja: "感情" }, { en: "employee", ja: "従業員" },
+  { en: "encourage", ja: "勇気づける" }, { en: "ending", ja: "終わり" }, { en: "equal", ja: "等しい" }, { en: "escape", ja: "逃げる" }, { en: "essay", ja: "随筆" },
+  // F (14)
+  { en: "fail", ja: "失敗する" }, { en: "failure", ja: "失敗" }, { en: "faith", ja: "信頼" }, { en: "familiar", ja: "親しい" }, { en: "fault", ja: "欠点" }, { en: "feature", ja: "特徴" }, { en: "female", ja: "女性の" }, { en: "figure", ja: "形・数字" }, { en: "fix", ja: "修理する" }, { en: "flight", ja: "飛行" },
+  { en: "flood", ja: "洪水" }, { en: "focus", ja: "集中する" }, { en: "follow", ja: "従う" }, { en: "forecast", ja: "予報" },
+  // G (11)
+  { en: "gain", ja: "得る" }, { en: "gas", ja: "ガス" }, { en: "generation", ja: "世代" }, { en: "global", ja: "地球の" }, { en: "government", ja: "政府" }, { en: "gradually", ja: "徐々に" }, { en: "guarantee", ja: "保証する" }, { en: "grocery", ja: "食料雑貨" }, { en: "growth", ja: "成長" }, { en: "guard", ja: "守る" },
+  { en: "guideline", ja: "指針" },
+  // H (10)
+  { en: "handle", ja: "扱う" }, { en: "handsome", ja: "ハンサムな" }, { en: "hang", ja: "つるす" }, { en: "harm", ja: "害する" }, { en: "heat", ja: "熱" }, { en: "hesitate", ja: "ためらう" }, { en: "hike", ja: "ハイキング" }, { en: "headache", ja: "頭痛" }, { en: "homestay", ja: "ホームステイ" }, { en: "honest", ja: "正直な" },
+  // I (14)
+  { en: "identify", ja: "特定する" }, { en: "ill", ja: "病気の" }, { en: "illness", ja: "病気" }, { en: "immediate", ja: "即座の" }, { en: "impact", ja: "影響" }, { en: "impress", ja: "感動させる" }, { en: "indeed", ja: "本当に" }, { en: "individual", ja: "個人" }, { en: "indoor", ja: "屋内の" }, { en: "infant", ja: "幼児" },
+  { en: "ingredient", ja: "材料" }, { en: "injury", ja: "けが" }, { en: "intelligent", ja: "知的な" }, { en: "international", ja: "国際的な" },
+  // J (4)
+  { en: "jam", ja: "ジャム・渋滞" }, { en: "jewelry", ja: "宝石類" }, { en: "journalist", ja: "記者" }, { en: "judge", ja: "判断する" },
+  // K (4)
+  { en: "kindergarten", ja: "幼稚園" }, { en: "kindness", ja: "親切" }, { en: "knit", ja: "編む" }, { en: "knot", ja: "結び目" },
+  // L (12)
+  { en: "labor", ja: "労働" }, { en: "laboratory", ja: "研究室" }, { en: "ladder", ja: "はしご" }, { en: "latest", ja: "最新の" }, { en: "laundry", ja: "洗濯" }, { en: "lawyer", ja: "弁護士" }, { en: "lay", ja: "横たえる" }, { en: "lecture", ja: "講義" }, { en: "legend", ja: "伝説" }, { en: "length", ja: "長さ" },
+  { en: "lift", ja: "持ち上げる" }, { en: "limit", ja: "制限" },
+  // M (15)
+  { en: "magnet", ja: "磁石" }, { en: "major", ja: "主要な" }, { en: "manage", ja: "管理する" }, { en: "mark", ja: "印" }, { en: "master", ja: "達人・主人" }, { en: "mature", ja: "成熟した" }, { en: "mayor", ja: "市長" }, { en: "meaning", ja: "意味" }, { en: "measure", ja: "測る" }, { en: "medical", ja: "医療の" },
+  { en: "mention", ja: "言及する" }, { en: "metal", ja: "金属" }, { en: "method", ja: "方法" }, { en: "minute", ja: "分" }, { en: "modern", ja: "現代の" },
+  // N (10)
+  { en: "native", ja: "母国の" }, { en: "navy", ja: "海軍" }, { en: "neat", ja: "きちんとした" }, { en: "necessity", ja: "必要" }, { en: "negative", ja: "否定的な" }, { en: "network", ja: "網状組織" }, { en: "niece", ja: "姪" }, { en: "noisy", ja: "うるさい" }, { en: "northern", ja: "北の" }, { en: "notice", ja: "気づく" },
+  // O (10)
+  { en: "obey", ja: "従う" }, { en: "object", ja: "物体" }, { en: "observe", ja: "観察する" }, { en: "occur", ja: "起こる" }, { en: "official", ja: "公式の" }, { en: "operate", ja: "操作する" }, { en: "opportunity", ja: "機会" }, { en: "organize", ja: "組織する" }, { en: "otherwise", ja: "そうでなければ" }, { en: "overcome", ja: "克服する" },
+  // P (19)
+  { en: "pack", ja: "詰める" }, { en: "paragraph", ja: "段落" }, { en: "partner", ja: "仲間" }, { en: "passenger", ja: "乗客" }, { en: "patience", ja: "忍耐" }, { en: "patient", ja: "患者・忍耐強い" }, { en: "pattern", ja: "型" }, { en: "perform", ja: "演じる" }, { en: "period", ja: "期間" }, { en: "personal", ja: "個人的な" },
+  { en: "photographer", ja: "写真家" }, { en: "physical", ja: "身体の" }, { en: "population", ja: "人口" }, { en: "predict", ja: "予言する" }, { en: "prefer", ja: "好む" }, { en: "prevent", ja: "防ぐ" }, { en: "present", ja: "現在の・贈り物" }, { en: "presentation", ja: "発表" }, { en: "president", ja: "大統領・社長" },
+  // Q (4)
+  { en: "qualify", ja: "資格を得る" }, { en: "quarter", ja: "4分の1" }, { en: "quietly", ja: "静かに" }, { en: "quote", ja: "引用する" },
+  // R (12)
+  { en: "rapid", ja: "急速な" }, { en: "rarely", ja: "めったに〜ない" }, { en: "react", ja: "反応する" }, { en: "realize", ja: "気づく・実現する" }, { en: "recover", ja: "回復する" }, { en: "refer", ja: "言及する" }, { en: "reflect", ja: "反映する" }, { en: "refuse", ja: "拒否する" }, { en: "regret", ja: "後悔する" }, { en: "regular", ja: "規則的な" },
+  { en: "relate", ja: "関連づける" }, { en: "relax", ja: "くつろぐ" },
+  // S (25)
+  { en: "salary", ja: "給料" }, { en: "satisfied", ja: "満足した" }, { en: "scared", ja: "怖がった" }, { en: "schedule", ja: "予定表" }, { en: "scientific", ja: "科学的な" }, { en: "screen", ja: "画面" }, { en: "select", ja: "選ぶ" }, { en: "semester", ja: "学期" }, { en: "senior", ja: "年上の" }, { en: "serious", ja: "真剣な" },
+  { en: "service", ja: "サービス" }, { en: "settle", ja: "解決する" }, { en: "severe", ja: "厳しい" }, { en: "shake", ja: "振る" }, { en: "shadow", ja: "影" }, { en: "shelf", ja: "棚" }, { en: "shelter", ja: "避難所" }, { en: "shock", ja: "衝撃" }, { en: "signal", ja: "信号" }, { en: "silence", ja: "沈黙" },
+  { en: "silver", ja: "銀" }, { en: "simple", ja: "簡単な" }, { en: "stranger", ja: "見知らぬ人" }, { en: "smooth", ja: "滑らかな" }, { en: "solid", ja: "固体の" },
+  // T (15)
+  { en: "tablet", ja: "錠剤・タブレット" }, { en: "talent", ja: "才能" }, { en: "task", ja: "仕事" }, { en: "tax", ja: "税" }, { en: "technique", ja: "技術" }, { en: "temperature", ja: "温度" }, { en: "theme", ja: "主題" }, { en: "theory", ja: "理論" }, { en: "therefore", ja: "それゆえに" }, { en: "toward", ja: "〜の方へ" },
+  { en: "track", ja: "跡・線路" }, { en: "trade", ja: "貿易" }, { en: "translate", ja: "翻訳する" }, { en: "treat", ja: "扱う・治療する" }, { en: "trick", ja: "計略" },
+  // U (8)
+  { en: "underground", ja: "地下の" }, { en: "underline", ja: "下線を引く" }, { en: "unfortunately", ja: "不運にも" }, { en: "union", ja: "連合" }, { en: "unite", ja: "結合する" }, { en: "until", ja: "〜まで" }, { en: "upset", ja: "うろたえた" }, { en: "urban", ja: "都会の" },
+  // V (6)
+  { en: "vacation", ja: "休暇" }, { en: "vehicle", ja: "乗り物" }, { en: "version", ja: "版" }, { en: "victory", ja: "勝利" }, { en: "volume", ja: "音量" }, { en: "vowel", ja: "母音" },
+  // W (13)
+  { en: "warning", ja: "警告" }, { en: "weakness", ja: "弱さ" }, { en: "wealthy", ja: "裕福な" }, { en: "weapon", ja: "武器" }, { en: "web", ja: "ウェブ" }, { en: "website", ja: "ウェブサイト" }, { en: "welfare", ja: "福祉" }, { en: "western", ja: "西の" }, { en: "whisper", ja: "ささやく" }, { en: "widely", ja: "広く" },
+  { en: "wisdom", ja: "知恵" }, { en: "witness", ja: "目撃者" }, { en: "wooden", ja: "木製の" },
+  // Y (2)
+  { en: "yawn", ja: "あくびをする" }, { en: "yearly", ja: "毎年の" },
+  // Z (1)
+  { en: "zone", ja: "地帯" }
+];
+
+// 発展問題 Lv.4 (高校受験〜高1レベル 約100問: 英検準2級〜2級水準／基本・Lv.1・Lv.2・Lv.3と非重複)
+const WORDS_LEVEL4 = [
+  // A (7)
+  { en: "access", ja: "接近・利用権" }, { en: "accomplish", ja: "達成する" }, { en: "accurate", ja: "正確な" }, { en: "acquire", ja: "獲得する" }, { en: "adapt", ja: "適応する" }, { en: "admire", ja: "尊敬する" }, { en: "argue", ja: "議論する" },
+  // B (5)
+  { en: "behalf", ja: "代わり" }, { en: "belief", ja: "信念" }, { en: "benefit", ja: "利益" }, { en: "bias", ja: "偏見" }, { en: "brief", ja: "短い・簡潔な" },
+  // C (8)
+  { en: "capable", ja: "能力がある" }, { en: "capacity", ja: "容量" }, { en: "ceremony", ja: "式典" }, { en: "characteristic", ja: "特徴" }, { en: "circumstance", ja: "状況" }, { en: "combine", ja: "結合する" }, { en: "command", ja: "命令" }, { en: "complex", ja: "複雑な" },
+  // D (6)
+  { en: "decline", ja: "減少する・断る" }, { en: "decorate", ja: "飾る" }, { en: "demand", ja: "要求" }, { en: "democracy", ja: "民主主義" }, { en: "demonstrate", ja: "実証する" }, { en: "distinguish", ja: "区別する" },
+  // E (6)
+  { en: "effect", ja: "効果" }, { en: "efficient", ja: "効率的な" }, { en: "emphasize", ja: "強調する" }, { en: "enable", ja: "可能にする" }, { en: "ensure", ja: "確実にする" }, { en: "estimate", ja: "推定する" },
+  // F (5)
+  { en: "facility", ja: "施設" }, { en: "factor", ja: "要因" }, { en: "federal", ja: "連邦の" }, { en: "fluent", ja: "流暢な" }, { en: "function", ja: "機能" },
+  // G (3)
+  { en: "generate", ja: "生み出す" }, { en: "genuine", ja: "本物の" }, { en: "glance", ja: "ちらりと見る" },
+  // H (4)
+  { en: "harsh", ja: "厳しい" }, { en: "hence", ja: "それゆえ" }, { en: "heritage", ja: "遺産" }, { en: "horizon", ja: "地平線" },
+  // I (6)
+  { en: "ignore", ja: "無視する" }, { en: "influence", ja: "影響" }, { en: "innocent", ja: "無罪の" }, { en: "inquire", ja: "尋ねる" }, { en: "intend", ja: "意図する" }, { en: "investigate", ja: "調査する" },
+  // J (2)
+  { en: "justice", ja: "正義" }, { en: "justify", ja: "正当化する" },
+  // K (1)
+  { en: "keen", ja: "熱心な" },
+  // L (3)
+  { en: "legal", ja: "合法的な" }, { en: "liberty", ja: "自由" }, { en: "locate", ja: "位置する" },
+  // M (5)
+  { en: "maintain", ja: "維持する" }, { en: "majority", ja: "多数派" }, { en: "manufacture", ja: "製造する" }, { en: "minor", ja: "小さな" }, { en: "moderate", ja: "適度な" },
+  // N (3)
+  { en: "negotiate", ja: "交渉する" }, { en: "notion", ja: "概念" }, { en: "numerous", ja: "多数の" },
+  // O (5)
+  { en: "obvious", ja: "明らかな" }, { en: "occasion", ja: "機会" }, { en: "option", ja: "選択肢" }, { en: "ordinary", ja: "普通の" }, { en: "outcome", ja: "結果" },
+  // P (8)
+  { en: "particular", ja: "特定の" }, { en: "perceive", ja: "知覚する" }, { en: "permanent", ja: "永久の" }, { en: "philosophy", ja: "哲学" }, { en: "policy", ja: "方針" }, { en: "politics", ja: "政治" }, { en: "potential", ja: "潜在能力" }, { en: "procedure", ja: "手続き" },
+  // Q (2)
+  { en: "qualification", ja: "資格" }, { en: "quantity", ja: "量" },
+  // R (5)
+  { en: "recognize", ja: "認識する" }, { en: "recommend", ja: "推薦する" }, { en: "reduce", ja: "減らす" }, { en: "regard", ja: "見なす" }, { en: "represent", ja: "代表する" },
+  // S (6)
+  { en: "scenery", ja: "景色" }, { en: "scheme", ja: "計画" }, { en: "significant", ja: "重要な" }, { en: "specific", ja: "特定の" }, { en: "struggle", ja: "奮闘する" }, { en: "suitable", ja: "適した" },
+  // T (4)
+  { en: "technical", ja: "技術的な" }, { en: "tend", ja: "傾向がある" }, { en: "transfer", ja: "移す" }, { en: "transform", ja: "変換する" },
+  // U (3)
+  { en: "universal", ja: "普遍的な" }, { en: "urgent", ja: "緊急の" }, { en: "utility", ja: "実用性" },
+  // V (3)
+  { en: "valid", ja: "有効な" }, { en: "variety", ja: "多様性" }, { en: "virtue", ja: "美徳" },
+  // W (2)
+  { en: "whereas", ja: "〜である一方" }, { en: "worth", ja: "価値がある" },
+  // Y (1)
+  { en: "yield", ja: "生み出す" },
+  // Z (1)
+  { en: "zealous", ja: "熱心な" }
+];
+
+// 全単語リスト（復習用）
+const ALL_WORDS = [...WORDS_BASIC, ...WORDS_LEVEL1, ...WORDS_LEVEL2, ...WORDS_LEVEL3, ...WORDS_LEVEL4];
+
+// 【短文データ】
+// 短文 BASIC (中1基礎レベル 50問: be動詞・一般動詞現在・疑問詞・命令文・can・現在進行形・There is/are)
+const SENTENCES_BASIC = [
+  { en: "I am a student.", ja: "私は生徒です。" },
+  { en: "You are kind.", ja: "あなたは親切です。" },
+  { en: "He is my brother.", ja: "彼は私の兄です。" },
+  { en: "She is from America.", ja: "彼女はアメリカ出身です。" },
+  { en: "We are happy.", ja: "私たちは幸せです。" },
+  { en: "They are in the classroom.", ja: "彼らは教室にいます。" },
+  { en: "This is my pen.", ja: "これは私のペンです。" },
+  { en: "That is your bag.", ja: "あれはあなたのかばんです。" },
+  { en: "These are my books.", ja: "これらは私の本です。" },
+  { en: "Those are nice flowers.", ja: "あれらは素敵な花です。" },
+  { en: "I like dogs.", ja: "私は犬が好きです。" },
+  { en: "You play soccer well.", ja: "あなたはサッカーが上手です。" },
+  { en: "He runs in the park every morning.", ja: "彼は毎朝公園で走ります。" },
+  { en: "She studies math hard.", ja: "彼女は数学を一生懸命勉強します。" },
+  { en: "We eat breakfast at seven.", ja: "私たちは7時に朝食を食べます。" },
+  { en: "I do not like coffee.", ja: "私はコーヒーが好きではありません。" },
+  { en: "He does not have a sister.", ja: "彼にはお姉さんがいません。" },
+  { en: "Do you live in Akita?", ja: "あなたは秋田に住んでいますか。" },
+  { en: "Does she play tennis?", ja: "彼女はテニスをしますか。" },
+  { en: "What is this?", ja: "これは何ですか。" },
+  { en: "Who is that man?", ja: "あの男の人は誰ですか。" },
+  { en: "Where do you live?", ja: "あなたはどこに住んでいますか。" },
+  { en: "When is your birthday?", ja: "あなたの誕生日はいつですか。" },
+  { en: "Why are you sad?", ja: "あなたはなぜ悲しいのですか。" },
+  { en: "How do you go to school?", ja: "あなたはどうやって学校へ行きますか。" },
+  { en: "Whose pen is this?", ja: "これは誰のペンですか。" },
+  { en: "Which is your bag?", ja: "どちらがあなたのかばんですか。" },
+  { en: "How many books do you have?", ja: "あなたは本を何冊持っていますか。" },
+  { en: "How old are you?", ja: "あなたは何歳ですか。" },
+  { en: "How much is this?", ja: "これはいくらですか。" },
+  { en: "Open the window, please.", ja: "窓を開けてください。" },
+  { en: "Don't run in the classroom.", ja: "教室で走ってはいけません。" },
+  { en: "Be quiet, please.", ja: "静かにしてください。" },
+  { en: "Let's play baseball.", ja: "野球をしましょう。" },
+  { en: "I can swim fast.", ja: "私は速く泳ぐことができます。" },
+  { en: "Can you cook?", ja: "あなたは料理ができますか。" },
+  { en: "He cannot drive a car.", ja: "彼は車を運転できません。" },
+  { en: "Can I use this pen?", ja: "このペンを使ってもいいですか。" },
+  { en: "I am reading a book now.", ja: "私は今本を読んでいます。" },
+  { en: "Are you watching TV?", ja: "あなたはテレビを見ていますか。" },
+  { en: "He is running in the park.", ja: "彼は公園で走っています。" },
+  { en: "She is not singing.", ja: "彼女は歌っていません。" },
+  { en: "What are you doing?", ja: "あなたは何をしていますか。" },
+  { en: "They are playing soccer there.", ja: "彼らはあそこでサッカーをしています。" },
+  { en: "There is a cat under the chair.", ja: "椅子の下に猫がいます。" },
+  { en: "There are three pens on the desk.", ja: "机の上にペンが3本あります。" },
+  { en: "Is there a park near here?", ja: "この近くに公園はありますか。" },
+  { en: "There is not a hospital in this town.", ja: "この町には病院がありません。" },
+  { en: "How many students are there in your class?", ja: "あなたのクラスには生徒が何人いますか。" },
+  { en: "There are some apples in the basket.", ja: "かごの中にいくつかのりんごがあります。" }
+];
+
+// 短文 Lv.1 (中1後半〜中2前半 50問: 過去形・過去進行形・未来形・基礎助動詞・have to・There was/were)
+const SENTENCES_LEVEL1 = [
+  { en: "I played soccer yesterday.", ja: "私は昨日サッカーをしました。" },
+  { en: "He went to school by bus.", ja: "彼はバスで学校へ行きました。" },
+  { en: "She studied English last night.", ja: "彼女は昨夜英語を勉強しました。" },
+  { en: "They visited Kyoto last summer.", ja: "彼らは去年の夏京都を訪れました。" },
+  { en: "Did you watch TV last night?", ja: "あなたは昨夜テレビを見ましたか。" },
+  { en: "I did not eat breakfast this morning.", ja: "私は今朝朝食を食べませんでした。" },
+  { en: "What did you buy at the store?", ja: "あなたは店で何を買いましたか。" },
+  { en: "She wrote a letter to her friend.", ja: "彼女は友達に手紙を書きました。" },
+  { en: "I was reading a book at nine.", ja: "私は9時に本を読んでいました。" },
+  { en: "Were you sleeping then?", ja: "あなたはその時眠っていましたか。" },
+  { en: "He was not playing the guitar.", ja: "彼はギターを弾いていませんでした。" },
+  { en: "What were you doing at that time?", ja: "あなたはその時何をしていましたか。" },
+  { en: "They were talking about the test.", ja: "彼らはテストについて話していました。" },
+  { en: "I was very tired yesterday.", ja: "私は昨日とても疲れていました。" },
+  { en: "Were they at the library?", ja: "彼らは図書館にいましたか。" },
+  { en: "It was a beautiful day.", ja: "美しい日でした。" },
+  { en: "I will help you tomorrow.", ja: "私は明日あなたを手伝います。" },
+  { en: "Will it be cold next week?", ja: "来週は寒くなるでしょうか。" },
+  { en: "He will not come to the meeting.", ja: "彼は会議に来ないでしょう。" },
+  { en: "What will you do this weekend?", ja: "あなたは今週末何をしますか。" },
+  { en: "I am going to study hard.", ja: "私は一生懸命勉強するつもりです。" },
+  { en: "Are you going to visit Tokyo?", ja: "あなたは東京を訪れる予定ですか。" },
+  { en: "We are not going to play tennis.", ja: "私たちはテニスをするつもりはありません。" },
+  { en: "You must do your homework.", ja: "あなたは宿題をしなければなりません。" },
+  { en: "We must not be late.", ja: "私たちは遅れてはいけません。" },
+  { en: "You should drink more water.", ja: "あなたはもっと水を飲むべきです。" },
+  { en: "May I open the window?", ja: "窓を開けてもよいですか。" },
+  { en: "It may rain this afternoon.", ja: "今日の午後雨が降るかもしれません。" },
+  { en: "I have to leave now.", ja: "私は今出発しなければなりません。" },
+  { en: "She has to take care of her brother.", ja: "彼女は弟の世話をしなければなりません。" },
+  { en: "Do we have to wear uniforms?", ja: "私たちは制服を着なければなりませんか。" },
+  { en: "You don't have to come early.", ja: "あなたは早く来る必要はありません。" },
+  { en: "I had to walk to school yesterday.", ja: "私は昨日歩いて学校へ行かなければなりませんでした。" },
+  { en: "There was a small park near my house.", ja: "私の家の近くに小さな公園がありました。" },
+  { en: "There were many people at the festival.", ja: "祭りにはたくさんの人がいました。" },
+  { en: "Could you say that again?", ja: "もう一度言っていただけますか。" },
+  { en: "Would you like some coffee?", ja: "コーヒーはいかがですか。" },
+  { en: "Shall we have lunch together?", ja: "一緒に昼食を食べませんか。" },
+  { en: "Will you carry this for me?", ja: "これを運んでくれませんか。" },
+  { en: "Let's go to the beach next Sunday.", ja: "次の日曜日に海に行きましょう。" },
+  { en: "He cleaned his room this morning.", ja: "彼は今朝部屋を掃除しました。" },
+  { en: "I saw a beautiful rainbow yesterday.", ja: "私は昨日美しい虹を見ました。" },
+  { en: "We went hiking last weekend.", ja: "私たちは先週末ハイキングに行きました。" },
+  { en: "She didn't call me last night.", ja: "彼女は昨夜私に電話しませんでした。" },
+  { en: "Where did you go yesterday?", ja: "あなたは昨日どこへ行きましたか。" },
+  { en: "When did the movie start?", ja: "映画はいつ始まりましたか。" },
+  { en: "Why did he leave early?", ja: "なぜ彼は早く帰ったのですか。" },
+  { en: "What are you going to wear?", ja: "あなたは何を着るつもりですか。" },
+  { en: "They are going to build a new library.", ja: "彼らは新しい図書館を建てる予定です。" },
+  { en: "I was happy because I got a present.", ja: "プレゼントをもらったので私はうれしかったです。" }
+];
+
+// 短文 Lv.2 (中2 50問: 不定詞3用法・動名詞・接続詞・比較／最上級／as〜as・SVOO・SVOC)
+const SENTENCES_LEVEL2 = [
+  { en: "I want to be a teacher.", ja: "私は先生になりたいです。" },
+  { en: "She likes to read books.", ja: "彼女は本を読むことが好きです。" },
+  { en: "To learn English is interesting.", ja: "英語を学ぶことは面白いです。" },
+  { en: "My dream is to travel abroad.", ja: "私の夢は海外を旅行することです。" },
+  { en: "I have a lot of work to do.", ja: "私にはやるべき仕事がたくさんあります。" },
+  { en: "He needs something to drink.", ja: "彼は何か飲み物を必要としています。" },
+  { en: "There are many places to visit.", ja: "訪れるべき場所がたくさんあります。" },
+  { en: "I went to the store to buy milk.", ja: "私は牛乳を買うために店に行きました。" },
+  { en: "She studies hard to pass the exam.", ja: "彼女は試験に合格するために一生懸命勉強します。" },
+  { en: "I am happy to meet you.", ja: "私はあなたに会えてうれしいです。" },
+  { en: "He was surprised to hear the news.", ja: "彼はその知らせを聞いて驚きました。" },
+  { en: "Reading books is my hobby.", ja: "本を読むことは私の趣味です。" },
+  { en: "I enjoy playing tennis.", ja: "私はテニスをするのを楽しみます。" },
+  { en: "She is good at swimming.", ja: "彼女は泳ぐのが得意です。" },
+  { en: "Thank you for inviting me.", ja: "招待してくれてありがとうございます。" },
+  { en: "I finished writing the report.", ja: "私はレポートを書き終えました。" },
+  { en: "How about going to a movie?", ja: "映画を見に行くのはどうですか。" },
+  { en: "I think that he is honest.", ja: "私は彼は正直だと思います。" },
+  { en: "I know that she is busy.", ja: "私は彼女が忙しいことを知っています。" },
+  { en: "When I came home, my mother was cooking.", ja: "私が家に帰ったとき、母は料理をしていました。" },
+  { en: "If you are free, please call me.", ja: "もし暇なら、私に電話してください。" },
+  { en: "Because it was hot, we drank a lot of water.", ja: "暑かったので、私たちはたくさん水を飲みました。" },
+  { en: "Although it was raining, we went out.", ja: "雨が降っていたけれども、私たちは出かけました。" },
+  { en: "I'll wait until you come back.", ja: "あなたが戻ってくるまで待ちます。" },
+  { en: "He is taller than his brother.", ja: "彼は弟よりも背が高いです。" },
+  { en: "This bag is heavier than that one.", ja: "このバッグはあのバッグよりも重いです。" },
+  { en: "She runs faster than me.", ja: "彼女は私よりも速く走ります。" },
+  { en: "Mt. Fuji is the highest mountain in Japan.", ja: "富士山は日本で最も高い山です。" },
+  { en: "This is the most interesting book of all.", ja: "これはすべての中で最も面白い本です。" },
+  { en: "He is the youngest in our family.", ja: "彼は私たちの家族の中で一番若いです。" },
+  { en: "I am as old as Tom.", ja: "私はトムと同じ年齢です。" },
+  { en: "This room is as big as that one.", ja: "この部屋はあの部屋と同じくらい大きいです。" },
+  { en: "She speaks English as well as her teacher.", ja: "彼女は先生と同じくらい上手に英語を話します。" },
+  { en: "I like dogs better than cats.", ja: "私は猫よりも犬の方が好きです。" },
+  { en: "Which season do you like the best?", ja: "あなたはどの季節が一番好きですか。" },
+  { en: "Please give me the book.", ja: "私にその本をください。" },
+  { en: "He told us a funny story.", ja: "彼は私たちに面白い話をしてくれました。" },
+  { en: "She showed me her picture.", ja: "彼女は私に彼女の写真を見せてくれました。" },
+  { en: "My mother bought me a new bag.", ja: "母は私に新しいバッグを買ってくれました。" },
+  { en: "I will send you an email.", ja: "あなたにEメールを送ります。" },
+  { en: "He teaches us math.", ja: "彼は私たちに数学を教えます。" },
+  { en: "We call him Ken.", ja: "私たちは彼をケンと呼びます。" },
+  { en: "They named the baby Yuki.", ja: "彼らは赤ちゃんをユキと名付けました。" },
+  { en: "The news made us sad.", ja: "その知らせは私たちを悲しくさせました。" },
+  { en: "Keep the door closed.", ja: "ドアを閉めたままにしてください。" },
+  { en: "I found this movie boring.", ja: "私はこの映画が退屈だと思いました。" },
+  { en: "It is fun to play in the snow.", ja: "雪の中で遊ぶのは楽しいです。" },
+  { en: "Speaking English is difficult for me.", ja: "英語を話すことは私にとって難しいです。" },
+  { en: "He was the first to arrive.", ja: "彼は最初に到着しました。" },
+  { en: "There is something to tell you.", ja: "あなたに伝えるべきことがあります。" }
+];
+
+// 短文 Lv.3 (中3 60問: 受動態・現在完了・現在完了進行形・want/tell/ask O to do・it...for...to・疑問詞+to do・分詞修飾・関係代名詞・間接疑問・too〜to/so〜that/enough to・相関接続詞)
+const SENTENCES_LEVEL3 = [
+  { en: "English is spoken in many countries.", ja: "英語は多くの国で話されています。" },
+  { en: "This room is cleaned every day.", ja: "この部屋は毎日掃除されます。" },
+  { en: "The window was broken yesterday.", ja: "その窓は昨日割られました。" },
+  { en: "The book was written by a famous author.", ja: "その本は有名な作家によって書かれました。" },
+  { en: "These pictures were taken in Hokkaido.", ja: "これらの写真は北海道で撮られました。" },
+  { en: "Was the song sung by her?", ja: "その歌は彼女によって歌われましたか。" },
+  { en: "Where was this car made?", ja: "この車はどこで作られましたか。" },
+  { en: "The bridge will be built next year.", ja: "その橋は来年建てられるでしょう。" },
+  { en: "The letter has been sent.", ja: "その手紙はすでに送られました。" },
+  { en: "The meeting is held every month.", ja: "会議は毎月開催されます。" },
+  { en: "I have lived in this town for ten years.", ja: "私はこの町に10年間住んでいます。" },
+  { en: "She has been busy since this morning.", ja: "彼女は今朝からずっと忙しいです。" },
+  { en: "How long have you studied Japanese?", ja: "あなたはどのくらい長く日本語を勉強していますか。" },
+  { en: "I have already finished my homework.", ja: "私はすでに宿題を終えました。" },
+  { en: "He has just arrived at the station.", ja: "彼はちょうど駅に着いたところです。" },
+  { en: "Have you cleaned your room yet?", ja: "あなたはもう部屋を掃除しましたか。" },
+  { en: "I have not eaten lunch yet.", ja: "私はまだ昼食を食べていません。" },
+  { en: "We have been to Hawaii three times.", ja: "私たちはハワイに3回行ったことがあります。" },
+  { en: "Have you ever seen a koala?", ja: "あなたはこれまでにコアラを見たことがありますか。" },
+  { en: "I have never read this novel.", ja: "私はこの小説を一度も読んだことがありません。" },
+  { en: "She has lost her key.", ja: "彼女は鍵をなくしてしまいました。" },
+  { en: "It has been raining for hours.", ja: "何時間も雨が降り続いています。" },
+  { en: "I want you to help me.", ja: "私はあなたに手伝ってほしいです。" },
+  { en: "My mother told me to wash the dishes.", ja: "母は私に皿を洗うように言いました。" },
+  { en: "He asked me to open the door.", ja: "彼は私にドアを開けるよう頼みました。" },
+  { en: "Please tell him to call me.", ja: "彼に私に電話するよう伝えてください。" },
+  { en: "It is important for us to study every day.", ja: "私たちが毎日勉強することは大切です。" },
+  { en: "It was difficult for me to answer the question.", ja: "その質問に答えることは私には難しかったです。" },
+  { en: "It is kind of you to help me.", ja: "手伝ってくれてあなたは親切ですね。" },
+  { en: "I don't know how to use this machine.", ja: "私はこの機械の使い方を知りません。" },
+  { en: "Please tell me what to do next.", ja: "次に何をすべきか教えてください。" },
+  { en: "Could you tell me where to go?", ja: "どこへ行くべきか教えていただけますか。" },
+  { en: "The girl singing on the stage is my sister.", ja: "ステージで歌っている女の子は私の妹です。" },
+  { en: "Look at the boy running in the park.", ja: "公園で走っている男の子を見なさい。" },
+  { en: "This is a book written in English.", ja: "これは英語で書かれた本です。" },
+  { en: "The language spoken in this country is French.", ja: "この国で話されている言語はフランス語です。" },
+  { en: "I bought a watch made in Japan.", ja: "私は日本製の時計を買いました。" },
+  { en: "I have a friend who speaks five languages.", ja: "私には5か国語を話す友達がいます。" },
+  { en: "The man who lives next door is a doctor.", ja: "隣に住んでいる男の人は医者です。" },
+  { en: "This is the cat which I found yesterday.", ja: "これは私が昨日見つけた猫です。" },
+  { en: "The book which I read last night was exciting.", ja: "私が昨夜読んだ本はわくわくしました。" },
+  { en: "I know a girl whose mother is a singer.", ja: "私は母親が歌手である女の子を知っています。" },
+  { en: "The dog that is barking is mine.", ja: "吠えている犬は私のです。" },
+  { en: "Anyone who works hard will succeed.", ja: "一生懸命働く人は誰でも成功するでしょう。" },
+  { en: "The movie that we saw was wonderful.", ja: "私たちが見た映画は素晴らしかったです。" },
+  { en: "He is the only person that can solve this problem.", ja: "彼はこの問題を解決できる唯一の人です。" },
+  { en: "Look at the house whose roof is red.", ja: "屋根が赤い家を見てください。" },
+  { en: "Do you know who made this cake?", ja: "あなたは誰がこのケーキを作ったか知っていますか。" },
+  { en: "I don't know where she lives.", ja: "私は彼女がどこに住んでいるか知りません。" },
+  { en: "Tell me what your name is.", ja: "あなたの名前を教えてください。" },
+  { en: "I wonder why he is angry.", ja: "彼はなぜ怒っているのだろう。" },
+  { en: "He is too young to drive.", ja: "彼は若すぎて運転できません。" },
+  { en: "This problem is too difficult for me to solve.", ja: "この問題は私には難しすぎて解けません。" },
+  { en: "She was so tired that she fell asleep.", ja: "彼女はとても疲れていたので眠ってしまいました。" },
+  { en: "It was so hot that we stayed inside.", ja: "とても暑かったので私たちは中にいました。" },
+  { en: "He is rich enough to buy a yacht.", ja: "彼はヨットを買えるほどお金持ちです。" },
+  { en: "Not only Tom but also Jane likes music.", ja: "トムだけでなくジェーンも音楽が好きです。" },
+  { en: "Either you or I have to go.", ja: "あなたか私のどちらかが行かなければなりません。" },
+  { en: "Neither he nor she came to the party.", ja: "彼も彼女もパーティーに来ませんでした。" },
+  { en: "Both my father and my mother are teachers.", ja: "父も母も両方とも教師です。" }
+];
+
+// 全短文リスト（復習用）
+const ALL_SENTENCES = [...SENTENCES_LEVEL1, ...SENTENCES_LEVEL2, ...SENTENCES_LEVEL3, ...SENTENCES_LEVEL4, ...SENTENCES_LEVEL5];
+
+
+// --- ユーティリティ関数 ---
+const shuffle = (array) => {
+  const newArray = [...array];
+  for (let i = newArray.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+  }
+  return newArray;
+};
+
+const formatDate = (isoString) => {
+  const d = new Date(isoString);
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+// 読み上げ機能
+const speakText = (text) => {
+  if (!text) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'en-US';
+  utterance.rate = 0.85;
+  window.speechSynthesis.speak(utterance);
+};
+
+
+// --- コンポーネント群 ---
+
+// プログレスバー
+const ProgressBar = ({ current, total }) => {
+  const percentage = (current / total) * 100;
+  return (
+    <div className="w-full bg-slate-200 h-1.5 shrink-0">
+      <div 
+        className="bg-blue-500 h-1.5 transition-all duration-300 ease-out" 
+        style={{ width: `${percentage}%` }}
+      ></div>
+    </div>
+  );
+};
+
+// カスタム確認モーダル
+const ConfirmModal = ({ isOpen, title, message, onConfirm, onCancel }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="absolute inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-xl flex flex-col items-center text-center mx-4">
+        <div className="w-12 h-12 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mb-4">
+          <AlertCircle size={24} />
+        </div>
+        <h3 className="font-bold text-xl text-slate-800 mb-2">{title}</h3>
+        <p className="text-slate-500 text-sm mb-6 leading-relaxed">{message}</p>
+        <div className="flex gap-3 w-full">
+          <button 
+            onClick={onCancel} 
+            className="flex-1 py-3.5 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 active:scale-[0.98] transition-all"
+          >
+            キャンセル
+          </button>
+          <button 
+            onClick={onConfirm} 
+            className="flex-1 py-3.5 bg-rose-500 text-white rounded-xl font-bold shadow-md shadow-rose-500/20 hover:bg-rose-600 active:scale-[0.98] transition-all"
+          >
+            終了する
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// 1. 単語テスト (4択 + 音声認識ステップ)
+const WordTest = ({ questions, currentIndex, setCurrentIndex, score, setScore, onFinish, wordsData, onAnswer }) => {
+  const [options, setOptions] = useState([]);
+  const [selected, setSelected] = useState(null);
+
+  // 発音テスト用の状態
+  const [speechPassed, setSpeechPassed] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [recognizedText, setRecognizedText] = useState('');
+  const currentQ = questions[currentIndex];
+
+  useEffect(() => {
+    if (questions.length > 0) {
+      const currentQ = questions[currentIndex];
+      const otherWords = shuffle(wordsData.filter(w => w.en !== currentQ.en && w.ja !== currentQ.ja)).slice(0, 3);
+      const newOptions = shuffle([currentQ, ...otherWords]);
+      setOptions(newOptions);
+      setSelected(null);
+      setSpeechPassed(false);
+      setIsListening(false);
+      setRecognizedText('');
+    }
+  }, [currentIndex, questions, wordsData]);
+
+  const startListening = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSpeechPassed(true);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      const timeoutId = setTimeout(() => {
+        if (!isListening) {
+           recognition.stop();
+           setRecognizedText('起動タイムアウト。スキップしてください');
+        }
+      }, 3000);
+
+      recognition.onstart = () => {
+        clearTimeout(timeoutId);
+        setIsListening(true);
+        setRecognizedText('聞き取っています...');
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        setRecognizedText(transcript);
+        setIsListening(false);
+        checkAnswer(transcript); 
+      };
+
+      recognition.onerror = (event) => {
+        clearTimeout(timeoutId);
+        console.error("Speech recognition error", event.error);
+        setIsListening(false);
+        setRecognizedText('エラー発生。スキップしてください');
+      };
+
+      recognition.onend = () => {
+        clearTimeout(timeoutId);
+        setIsListening(false);
+      };
+
+      recognition.start();
+    } catch (e) {
+      console.error(e);
+      setIsListening(false);
+      setRecognizedText('エラー発生。スキップしてください');
+    }
+  };
+
+  const checkAnswer = (transcript) => {
+    const normalize = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (normalize(transcript) === normalize(currentQ.en)) {
+      setSpeechPassed(true);
+    }
+  };
+
+  const handleSelect = (option) => {
+    if (selected || !speechPassed) return; 
+    setSelected(option);
+    const isCorrect = option.en === questions[currentIndex].en;
+    
+    if (isCorrect) setScore(s => s + 1);
+    onAnswer(isCorrect);
+
+    setTimeout(() => {
+      if (currentIndex < questions.length - 1) {
+        setCurrentIndex(i => i + 1);
+      } else {
+        onFinish();
+      }
+    }, 1000);
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-white relative">
+      <ProgressBar current={currentIndex} total={questions.length} />
+      <div className="p-6 flex-1 flex flex-col justify-center overflow-y-auto">
+        <div className="w-full max-w-md md:max-w-3xl mx-auto flex flex-col justify-center">
+          <div className="text-center mb-2 text-sm text-slate-500 font-medium tracking-wider">
+            問題 {currentIndex + 1} / {questions.length}
+          </div>
+          <div className="text-center mb-8">
+            <button 
+              onClick={() => speakText(currentQ?.en)}
+              className="group relative inline-flex items-center justify-center cursor-pointer hover:scale-105 transition-transform"
+              title="発音を聞く"
+            >
+              <h2 className="text-4xl font-bold text-slate-800 mb-2 group-hover:text-blue-600 transition-colors">{currentQ?.en}</h2>
+              <Volume2 size={24} className="absolute -right-8 text-slate-300 group-hover:text-blue-500 transition-colors" />
+            </button>
+          </div>
+
+          {!speechPassed ? (
+            <div className="flex flex-col items-center animate-in fade-in duration-300 mb-4 bg-slate-50 p-6 rounded-2xl border border-slate-100">
+               <p className="text-slate-500 text-sm mb-4 font-bold">マイクを押して発音してください</p>
+               <button 
+                onClick={startListening}
+                disabled={isListening}
+                className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-md mb-4 ${isListening ? 'bg-rose-500 text-white animate-pulse' : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95'}`}
+              >
+                <Mic size={32} />
+              </button>
+              {recognizedText && (
+                 <div className="text-center w-full">
+                    <p className="text-xs text-slate-400">ステータス:</p>
+                    <p className={`font-mono text-base font-bold px-2 break-words ${recognizedText === '聞き取っています...' ? 'text-slate-400' : 'text-rose-500'}`}>{recognizedText}</p>
+                 </div>
+              )}
+              <button onClick={() => setSpeechPassed(true)} className="mt-4 text-xs text-slate-400 underline hover:text-slate-600 p-2">
+                発音をスキップする
+              </button>
+            </div>
+          ) : (
+            <div className="animate-in slide-in-from-bottom-4 duration-300 w-full">
+               <p className="text-slate-500 mt-2 text-center mb-4 font-bold text-emerald-600 flex items-center justify-center gap-1"><CheckCircle2 size={18}/> 正しい意味を選んでください</p>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {options.map((opt, idx) => {
+                  let btnClass = "p-4 rounded-xl border-2 text-[15px] md:text-lg font-medium transition-all text-left w-full ";
+                  
+                  if (!selected) {
+                    btnClass += "border-slate-200 bg-white hover:border-blue-400 hover:bg-blue-50 text-slate-700 active:scale-[0.98]";
+                  } else {
+                    const isCorrectOption = opt.en === currentQ.en;
+                    const isSelectedOption = opt === selected;
+                    
+                    if (isCorrectOption) {
+                      btnClass += "border-emerald-500 bg-emerald-50 text-emerald-700";
+                    } else if (isSelectedOption) {
+                      btnClass += "border-rose-500 bg-rose-50 text-rose-700";
+                    } else {
+                      btnClass += "border-slate-200 bg-white text-slate-400 opacity-50";
+                    }
+                  }
+
+                  return (
+                    <button 
+                      key={idx} 
+                      onClick={() => handleSelect(opt)}
+                      className={btnClass}
+                      disabled={!!selected}
+                    >
+                      <div className="flex justify-between items-center">
+                        <span>{opt.ja}</span>
+                        {selected && opt.en === currentQ.en && <CheckCircle2 className="text-emerald-500" />}
+                        {selected && opt === selected && opt.en !== currentQ.en && <XCircle className="text-rose-500" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// 2. 短文和訳テスト (入力判定式)
+const SentenceTest = ({ questions, currentIndex, setCurrentIndex, score, setScore, onFinish, onAnswer }) => {
+  const [inputText, setInputText] = useState('');
+  const [showResult, setShowResult] = useState(false);
+  const [isCorrect, setIsCorrect] = useState(false);
+  const [overrideCorrect, setOverrideCorrect] = useState(false);
+  const currentQ = questions[currentIndex];
+
+  useEffect(() => {
+    setInputText('');
+    setShowResult(false);
+    setIsCorrect(false);
+    setOverrideCorrect(false);
+  }, [currentIndex]);
+
+  const handleCheck = () => {
+    if (!inputText.trim()) return;
+    const normalize = (str) => str.replace(/[\s　、。！？!?]/g, '');
+    const match = normalize(inputText) === normalize(currentQ.ja);
+    setIsCorrect(match);
+    setShowResult(true);
+  };
+
+  const handleNext = () => {
+    const finalIsCorrect = isCorrect || overrideCorrect;
+    if (finalIsCorrect) setScore(s => s + 1);
+    onAnswer(finalIsCorrect);
+    
+    if (currentIndex < questions.length - 1) {
+      setCurrentIndex(i => i + 1);
+    } else {
+      onFinish();
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      if (!showResult) {
+        handleCheck();
+      } else {
+        handleNext();
+      }
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-white relative">
+      <ProgressBar current={currentIndex} total={questions.length} />
+      <div className="p-6 flex-1 flex flex-col items-center overflow-y-auto">
+        <div className="text-center mb-4 text-sm text-slate-500 font-medium tracking-wider w-full">
+          問題 {currentIndex + 1} / {questions.length}
+        </div>
+        
+        <div className="flex-1 flex flex-col justify-center items-center w-full max-w-md md:max-w-2xl mx-auto">
+          <button 
+            onClick={() => speakText(currentQ?.en)}
+            className="w-full bg-blue-50 hover:bg-blue-100 p-6 rounded-2xl mb-6 shadow-sm border border-blue-100 transition-colors group relative"
+            title="発音を聞く"
+          >
+            <Volume2 size={20} className="absolute top-4 right-4 text-blue-300 group-hover:text-blue-500 transition-colors" />
+            <h2 className="text-xl font-bold text-slate-800 text-center leading-relaxed group-hover:text-blue-700 transition-colors">
+              {currentQ?.en}
+            </h2>
+          </button>
+
+          <p className="text-slate-500 text-sm mb-2 w-full text-left">日本語訳を入力してください</p>
+          <textarea
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={showResult}
+            placeholder="ここに日本語を入力..."
+            className="w-full p-4 border-2 border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 bg-slate-50 mb-6 resize-none h-28 transition-colors disabled:bg-slate-100 disabled:text-slate-500"
+          />
+
+          {!showResult ? (
+            <button 
+              onClick={handleCheck}
+              disabled={!inputText.trim()}
+              className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold text-lg shadow-md hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:active:scale-100"
+            >
+              答え合わせ
+            </button>
+          ) : (
+            <div className="w-full flex flex-col items-center animate-in fade-in slide-in-from-bottom-4 duration-300">
+              <div className={`w-full p-4 rounded-xl mb-4 text-center font-bold text-lg flex items-center justify-center gap-2 ${isCorrect ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-rose-100 text-rose-700 border border-rose-200'}`}>
+                {isCorrect ? <><CheckCircle2 /> 正解！</> : <><XCircle /> 不正解</>}
+              </div>
+              
+              {!isCorrect && (
+                <div className="mb-4 w-full bg-slate-50 p-4 rounded-xl border border-slate-200 text-left">
+                  <p className="text-sm text-slate-500 mb-1">模範解答：</p>
+                  <p className="text-lg font-bold text-slate-800 mb-3 border-b border-slate-200 pb-2">{currentQ?.ja}</p>
+                  
+                  {!overrideCorrect ? (
+                    <button 
+                      onClick={() => setOverrideCorrect(true)}
+                      className="w-full py-2 border-2 border-emerald-400 text-emerald-600 bg-emerald-50 rounded-lg text-sm font-bold hover:bg-emerald-100 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <CheckCircle2 size={16} /> 意味は合っているので正解にする
+                    </button>
+                  ) : (
+                    <div className="text-center text-emerald-600 text-sm font-bold flex items-center justify-center gap-1">
+                      <CheckCircle2 size={16} /> 正解として記録します
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <button 
+                onClick={handleNext}
+                className="w-full py-4 bg-slate-800 text-white rounded-xl font-bold text-lg shadow-md hover:bg-slate-700 active:scale-[0.98] transition-all flex justify-center items-center gap-2 mt-2"
+              >
+                次へ <ArrowRight size={20} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// 3. リスニングテスト (ディクテーション)
+const ListeningTest = ({ questions, currentIndex, setCurrentIndex, score, setScore, onFinish, onAnswer }) => {
+  const [inputText, setInputText] = useState('');
+  const [showResult, setShowResult] = useState(false);
+  const [isCorrect, setIsCorrect] = useState(false);
+  const inputRef = useRef(null);
+  const currentQ = questions[currentIndex];
+
+  useEffect(() => {
+    setInputText('');
+    setShowResult(false);
+  }, [currentIndex]);
+
+  const handleCheck = () => {
+    if (inputText.trim() === '') return;
+    const correctAns = currentQ.en.toLowerCase();
+    const userAns = inputText.trim().toLowerCase();
+    
+    const correct = correctAns === userAns;
+    setIsCorrect(correct);
+    if (correct) setScore(s => s + 1);
+    setShowResult(true);
+    onAnswer(correct);
+  };
+
+  const handleNext = () => {
+    if (currentIndex < questions.length - 1) {
+      setCurrentIndex(i => i + 1);
+    } else {
+      onFinish();
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      if (!showResult) {
+        handleCheck();
+      } else {
+        handleNext();
+      }
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-white relative">
+      <ProgressBar current={currentIndex} total={questions.length} />
+      <div className="p-6 flex-1 flex flex-col items-center overflow-y-auto">
+        <div className="text-center mb-6 text-sm text-slate-500 font-medium tracking-wider w-full">
+          問題 {currentIndex + 1} / {questions.length}
+        </div>
+        
+        <div className="flex-1 flex flex-col justify-center items-center w-full max-w-md md:max-w-2xl mx-auto">
+          
+          <button 
+            onClick={() => speakText(currentQ?.en)}
+            className="mb-8 w-24 h-24 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center hover:bg-blue-200 hover:scale-105 transition-all shadow-sm active:scale-95"
+          >
+            <Volume2 size={48} />
+          </button>
+          
+          <p className="text-slate-500 text-sm mb-4">聞こえた英単語を入力してください</p>
+
+          <input
+            ref={inputRef}
+            type="text"
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={showResult}
+            placeholder="Type here..."
+            className="w-full text-center text-2xl p-4 border-2 border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 bg-slate-50 mb-6 font-mono transition-colors disabled:bg-slate-100 disabled:text-slate-500"
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck="false"
+          />
+
+          {!showResult ? (
+            <button 
+              onClick={handleCheck}
+              disabled={inputText.trim() === ''}
+              className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold text-lg shadow-md hover:bg-blue-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:active:scale-100"
+            >
+              解答する
+            </button>
+          ) : (
+            <div className="w-full flex flex-col items-center animate-in fade-in slide-in-from-bottom-4 duration-300">
+              <div className={`w-full p-4 rounded-xl mb-4 text-center font-bold text-lg flex items-center justify-center gap-2 ${isCorrect ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-rose-100 text-rose-700 border border-rose-200'}`}>
+                {isCorrect ? <><CheckCircle2 /> 正解！</> : <><XCircle /> 不正解</>}
+              </div>
+              
+              {!isCorrect && (
+                <div className="mb-6 text-center w-full bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <p className="text-sm text-slate-500 mb-1">正解は</p>
+                  <p className="text-2xl font-bold text-slate-800">{currentQ?.en}</p>
+                  <p className="text-sm text-slate-600 mt-2">{currentQ?.ja}</p>
+                </div>
+              )}
+
+              <button 
+                onClick={handleNext}
+                className="w-full py-4 bg-slate-800 text-white rounded-xl font-bold text-lg shadow-md hover:bg-slate-700 active:scale-[0.98] transition-all flex justify-center items-center gap-2"
+              >
+                次へ <ArrowRight size={20} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// 4. 英作文テスト (和文英訳)
+const WritingTest = ({ questions, currentIndex, setCurrentIndex, score, setScore, onFinish, onAnswer }) => {
+  const [inputText, setInputText] = useState('');
+  const [showResult, setShowResult] = useState(false);
+  const [isCorrect, setIsCorrect] = useState(false);
+  const [overrideCorrect, setOverrideCorrect] = useState(false);
+  const currentQ = questions[currentIndex];
+
+  useEffect(() => {
+    setInputText('');
+    setShowResult(false);
+    setIsCorrect(false);
+    setOverrideCorrect(false);
+  }, [currentIndex]);
+
+  const handleCheck = () => {
+    if (!inputText.trim()) return;
+    const normalize = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const match = normalize(inputText) === normalize(currentQ.en);
+    setIsCorrect(match);
+    setShowResult(true);
+  };
+
+  const handleNext = () => {
+    const finalIsCorrect = isCorrect || overrideCorrect;
+    if (finalIsCorrect) setScore(s => s + 1);
+    onAnswer(finalIsCorrect);
+    
+    if (currentIndex < questions.length - 1) {
+      setCurrentIndex(i => i + 1);
+    } else {
+      onFinish();
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!showResult) {
+        handleCheck();
+      } else {
+        handleNext();
+      }
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-white relative">
+      <ProgressBar current={currentIndex} total={questions.length} />
+      <div className="p-6 flex-1 flex flex-col items-center overflow-y-auto">
+        <div className="text-center mb-4 text-sm text-slate-500 font-medium tracking-wider w-full">
+          問題 {currentIndex + 1} / {questions.length}
+        </div>
+        
+        <div className="flex-1 flex flex-col justify-center items-center w-full max-w-md md:max-w-2xl mx-auto">
+          <div className="bg-amber-50 p-6 rounded-2xl w-full mb-6 shadow-sm border border-amber-100">
+            <h2 className="text-xl font-bold text-slate-800 text-center leading-relaxed">
+              {currentQ?.ja}
+            </h2>
+          </div>
+
+          <p className="text-slate-500 text-sm mb-2 w-full text-left">英文を入力してください</p>
+          <textarea
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={showResult}
+            placeholder="Type your English translation here..."
+            className="w-full p-4 border-2 border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 bg-slate-50 mb-6 resize-none h-28 transition-colors disabled:bg-slate-100 disabled:text-slate-500 font-mono text-lg"
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck="false"
+          />
+
+          {!showResult ? (
+            <button 
+              onClick={handleCheck}
+              disabled={!inputText.trim()}
+              className="w-full py-4 bg-amber-500 text-white rounded-xl font-bold text-lg shadow-md hover:bg-amber-600 active:scale-[0.98] transition-all disabled:opacity-50 disabled:active:scale-100"
+            >
+              答え合わせ
+            </button>
+          ) : (
+            <div className="w-full flex flex-col items-center animate-in fade-in slide-in-from-bottom-4 duration-300">
+              <div className={`w-full p-4 rounded-xl mb-4 text-center font-bold text-lg flex items-center justify-center gap-2 ${isCorrect ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-rose-100 text-rose-700 border border-rose-200'}`}>
+                {isCorrect ? <><CheckCircle2 /> 正解！</> : <><XCircle /> 不正解</>}
+              </div>
+              
+              {!isCorrect && (
+                <div className="mb-4 w-full bg-slate-50 p-4 rounded-xl border border-slate-200 text-left relative group">
+                  <p className="text-sm text-slate-500 mb-1">模範解答：</p>
+                  <p className="text-lg font-bold text-slate-800 mb-3 border-b border-slate-200 pb-2 flex items-center justify-between">
+                    {currentQ?.en}
+                    <button onClick={() => speakText(currentQ?.en)} className="text-blue-500 p-1 hover:bg-blue-100 rounded-full transition-colors"><Volume2 size={18}/></button>
+                  </p>
+                  
+                  {!overrideCorrect ? (
+                    <button 
+                      onClick={() => setOverrideCorrect(true)}
+                      className="w-full py-2 border-2 border-emerald-400 text-emerald-600 bg-emerald-50 rounded-lg text-sm font-bold hover:bg-emerald-100 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <CheckCircle2 size={16} /> 別の表現で合っているので正解にする
+                    </button>
+                  ) : (
+                    <div className="text-center text-emerald-600 text-sm font-bold flex items-center justify-center gap-1">
+                      <CheckCircle2 size={16} /> 正解として記録します
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <button 
+                onClick={handleNext}
+                className="w-full py-4 bg-slate-800 text-white rounded-xl font-bold text-lg shadow-md hover:bg-slate-700 active:scale-[0.98] transition-all flex justify-center items-center gap-2 mt-2"
+              >
+                次へ <ArrowRight size={20} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// 5. スピーキングテスト (音声認識 + iPhoneフォールバック)
+const SpeakingTest = ({ questions, currentIndex, setCurrentIndex, score, setScore, onFinish, onAnswer }) => {
+  const [recognizedText, setRecognizedText] = useState('');
+  const [showResult, setShowResult] = useState(false);
+  const [isCorrect, setIsCorrect] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isFallback, setIsFallback] = useState(false); 
+  const [inputText, setInputText] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+  const currentQ = questions[currentIndex];
+
+  useEffect(() => {
+    setRecognizedText('');
+    setShowResult(false);
+    setIsCorrect(false);
+    setIsFallback(false);
+    setInputText('');
+    setErrorMessage('');
+  }, [currentIndex]);
+
+  const startListening = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setErrorMessage("ブラウザが音声認識に未対応のため、入力モードに切り替えました。");
+      setIsFallback(true);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      const timeoutId = setTimeout(() => {
+        if (!isListening) {
+           recognition.stop();
+           setErrorMessage("マイクの起動に失敗しました。");
+           setIsFallback(true);
+        }
+      }, 3000);
+
+      recognition.onstart = () => {
+        clearTimeout(timeoutId);
+        setIsListening(true);
+        setRecognizedText('聞き取っています...');
+        setErrorMessage('');
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        setRecognizedText(transcript);
+        setIsListening(false);
+        checkAnswer(transcript); 
+      };
+
+      recognition.onerror = (event) => {
+        clearTimeout(timeoutId);
+        console.error("Speech recognition error", event.error);
+        setIsListening(false);
+        setRecognizedText('');
+        setErrorMessage("マイクへのアクセスが拒否されたか、エラーが発生しました。");
+        setIsFallback(true);
+      };
+
+      recognition.onend = () => {
+        clearTimeout(timeoutId);
+        setIsListening(false);
+      };
+
+      recognition.start();
+    } catch (e) {
+      console.error(e);
+      setIsListening(false);
+      setErrorMessage("マイクの起動エラーが発生しました。");
+      setIsFallback(true);
+    }
+  };
+
+  const checkAnswer = (transcript) => {
+    const normalize = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const match = normalize(transcript) === normalize(currentQ.en);
+    setIsCorrect(match);
+    setShowResult(true);
+  };
+
+  const handleNext = () => {
+    if (isCorrect) setScore(s => s + 1);
+    onAnswer(isCorrect);
+    
+    if (currentIndex < questions.length - 1) {
+      setCurrentIndex(i => i + 1);
+    } else {
+      onFinish();
+    }
+  };
+
+  const handleFallbackCheck = () => {
+    if (!inputText.trim()) return;
+    checkAnswer(inputText);
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-white relative">
+      <ProgressBar current={currentIndex} total={questions.length} />
+      <div className="p-6 flex-1 flex flex-col items-center overflow-y-auto">
+        <div className="text-center mb-6 text-sm text-slate-500 font-medium tracking-wider w-full">
+          問題 {currentIndex + 1} / {questions.length}
+        </div>
+        
+        <div className="flex-1 flex flex-col justify-center items-center w-full max-w-md md:max-w-2xl mx-auto">
+          
+          <div className="w-full bg-slate-50 p-6 rounded-2xl mb-8 shadow-sm border border-slate-200 relative group">
+            <h2 className="text-2xl font-bold text-slate-800 text-center leading-relaxed">
+              {currentQ?.en}
+            </h2>
+            <p className="text-center text-slate-500 mt-2 text-sm">{currentQ?.ja}</p>
+            <button onClick={() => speakText(currentQ?.en)} className="absolute top-2 right-2 text-blue-400 p-2 hover:bg-blue-100 hover:text-blue-600 rounded-full transition-colors" title="お手本を聞く"><Volume2 size={20}/></button>
+          </div>
+
+          {!showResult ? (
+            <div className="flex flex-col items-center w-full">
+              {!isFallback ? (
+                 <>
+                   <p className="text-slate-500 text-sm mb-4">マイクボタンを押して、英文を読んでください</p>
+                   <button 
+                    onClick={startListening}
+                    disabled={isListening}
+                    className={`w-24 h-24 rounded-full flex items-center justify-center transition-all shadow-md ${isListening ? 'bg-rose-500 text-white animate-pulse' : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95'}`}
+                  >
+                    <Mic size={40} />
+                  </button>
+                  {recognizedText && <p className="mt-6 text-slate-600 font-mono text-center bg-slate-100 p-3 rounded-lg w-full">{recognizedText}</p>}
+                  <button onClick={() => setIsFallback(true)} className="mt-8 text-xs text-slate-400 underline hover:text-slate-600 p-2">
+                    マイクが上手く機能しない場合はこちら
+                  </button>
+                 </>
+              ) : (
+                <div className="w-full animate-in fade-in duration-300">
+                  {errorMessage && <p className="text-xs text-rose-500 font-bold mb-3 bg-rose-50 p-3 rounded-xl border border-rose-100">{errorMessage}</p>}
+                  <p className="text-slate-500 text-sm mb-2">英文をタイピングしてください<br/><span className="text-xs text-blue-500 font-bold">※キーボードのマイクボタンで音声入力が可能です</span></p>
+                  <input
+                    type="text"
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleFallbackCheck()}
+                    placeholder="Type the English sentence..."
+                    className="w-full text-center text-lg p-4 border-2 border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 bg-slate-50 mb-4 font-mono"
+                    autoComplete="off" spellCheck="false"
+                  />
+                  <button onClick={handleFallbackCheck} disabled={!inputText.trim()} className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold shadow-md hover:bg-blue-700 disabled:opacity-50">
+                    答え合わせ
+                  </button>
+                  <button onClick={() => setIsFallback(false)} className="mt-4 w-full text-xs text-slate-400 underline hover:text-slate-600 p-2">
+                    アプリのマイクに戻る
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="w-full flex flex-col items-center animate-in fade-in slide-in-from-bottom-4 duration-300">
+               <div className="mb-4 w-full">
+                  <p className="text-xs text-slate-500 mb-1">認識・入力されたテキスト:</p>
+                  <div className="p-4 bg-slate-100 rounded-xl border border-slate-200 font-mono text-slate-700 text-lg text-center break-words">
+                    {isFallback ? inputText : (recognizedText || "(音声なし)")}
+                  </div>
+               </div>
+
+              <div className={`w-full p-4 rounded-xl mb-6 text-center font-bold text-lg flex items-center justify-center gap-2 ${isCorrect ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-rose-100 text-rose-700 border border-rose-200'}`}>
+                {isCorrect ? <><CheckCircle2 /> {isFallback ? '正解！' : '発音バッチリ！'}</> : <><XCircle /> もう少し！</>}
+              </div>
+              
+              {!isCorrect && (
+                <button 
+                  onClick={() => { setShowResult(false); setRecognizedText(''); setInputText(''); }}
+                  className="w-full py-3 mb-4 border-2 border-blue-400 text-blue-600 bg-blue-50 rounded-xl font-bold hover:bg-blue-100 transition-colors"
+                >
+                  もう一度{isFallback ? '入力' : '発音'}してみる
+                </button>
+              )}
+
+              <button 
+                onClick={handleNext}
+                className="w-full py-4 bg-slate-800 text-white rounded-xl font-bold text-lg shadow-md hover:bg-slate-700 active:scale-[0.98] transition-all flex justify-center items-center gap-2"
+              >
+                次へ <ArrowRight size={20} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+// ホーム画面 (モード選択 & 履歴・復習)
+const HomeView = ({ onStart, statsData, historyData, onReview, onExportText, onImportText }) => {
+  const [tab, setTab] = useState('learn');
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // --- デイリーチェックの集計 ---
+  const todayStr = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+  const todaysRecords = historyData.filter(r => {
+    const d = new Date(r.date);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` === todayStr;
+  });
+
+  const getDailyProgress = (mode) => {
+    const records = todaysRecords.filter(r => r.mode === mode).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    let first = false;
+    let second = false;
+    if (records.length > 0) {
+      first = true;
+      if (records[0].accuracy >= 80) {
+        second = true; 
+      } else if (records.length > 1) {
+        second = true;
+      }
+    }
+    return { first, second };
+  };
+
+  const DailyChecks = ({ mode }) => {
+    const { first, second } = getDailyProgress(mode);
+    return (
+      <div className="flex gap-1 items-center">
+        <div className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center border ${first ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-slate-100 border-slate-200'}`} title="1回目完了">
+          {first && <CheckCircle2 size={10} className="stroke-[3]" />}
+        </div>
+        <div className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center border ${second ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-slate-100 border-slate-200'}`} title="2回目完了 (8割以上でスキップ)">
+          {second && <CheckCircle2 size={10} className="stroke-[3]" />}
+        </div>
+      </div>
+    );
+  };
+
+  const getGroupDailyProgress = (modes) => {
+    let groupFirst = false;
+    let groupSecond = false;
+    modes.forEach(mode => {
+      const { first, second } = getDailyProgress(mode);
+      if (first) groupFirst = true;
+      if (second) groupSecond = true;
+    });
+    return { first: groupFirst, second: groupSecond };
+  };
+
+  const DailyChecksGroup = ({ modes }) => {
+    const { first, second } = getGroupDailyProgress(modes);
+    return (
+      <div className="flex gap-1 items-center">
+        <div className={`w-4 h-4 rounded-sm flex items-center justify-center border ${first ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-slate-100 border-slate-200'}`} title="1回目完了 (どれか1つクリアでOK)">
+          {first && <CheckCircle2 size={12} className="stroke-[3]" />}
+        </div>
+        <div className={`w-4 h-4 rounded-sm flex items-center justify-center border ${second ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-slate-100 border-slate-200'}`} title="2回目完了 (どれか1つで8割以上)">
+          {second && <CheckCircle2 size={12} className="stroke-[3]" />}
+        </div>
+      </div>
+    );
+  };
+
+  // 進捗率取得用
+  const getCorrectCount = (dataset) => {
+    return dataset.filter(w => statsData.some(s => s.en === w.en && s.correctCount > 0)).length;
+  };
+
+  // --- 復習対象の抽出 ---
+  const needsReviewWords = statsData.filter(d => d.needsReview && d.type === 'word');
+  const needsReviewSentences = statsData.filter(d => d.needsReview && d.type === 'sentence');
+  const allWrongWords = statsData.filter(d => d.wrongCount > 0 && d.type === 'word');
+  const allWrongSentences = statsData.filter(d => d.wrongCount > 0 && d.type === 'sentence');
+
+  const reviewWordCountToday = todaysRecords.filter(r => r.mode === 'review_word').length;
+  const reviewSentenceCountToday = todaysRecords.filter(r => r.mode === 'review_sentence').length;
+  const canReviewWord = reviewWordCountToday < 2 && needsReviewWords.length > 0;
+  const canReviewSentence = reviewSentenceCountToday < 2 && needsReviewSentences.length > 0;
+
+  // --- カレンダー処理 ---
+  const getDaysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
+  const getFirstDayOfMonth = (year, month) => new Date(year, month, 1).getDay();
+
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  const daysInMonth = getDaysInMonth(year, month);
+  const firstDay = getFirstDayOfMonth(year, month);
+
+  const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
+  const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
+
+  const calendarDays = [];
+  for (let i = 0; i < firstDay; i++) {
+    calendarDays.push({ number: '', isCurrentMonth: false });
+  }
+  for (let i = 1; i <= daysInMonth; i++) {
+    calendarDays.push({ 
+      number: i, 
+      isCurrentMonth: true,
+      dateStr: `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`
+    });
+  }
+
+  const getRecordsForDate = (dateStr) => {
+    return historyData.filter(record => {
+      const recordDate = new Date(record.date);
+      const rDateStr = `${recordDate.getFullYear()}-${String(recordDate.getMonth() + 1).padStart(2, '0')}-${String(recordDate.getDate()).padStart(2, '0')}`;
+      return rDateStr === dateStr;
+    });
+  };
+
+  const selectedDateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`;
+  const selectedDateRecords = getRecordsForDate(selectedDateStr);
+
+  const formatModeName = (mode) => {
+    const names = {
+      'word_basic': '単語 基本', 'word_lvl1': '単語 Lv.1', 'word_lvl2': '単語 Lv.2', 'word_lvl3': '単語 Lv.3',
+      'sentence_lvl1': '短文 Lv.1', 'sentence_lvl2': '短文 Lv.2', 'sentence_lvl3': '短文 Lv.3', 'sentence_lvl4': '短文 Lv.4', 'sentence_lvl5': '短文 Lv.5',
+      'word': '単語 旧基本', 'sentence': '短文 旧基本',
+      'listening': 'リスニング', 'writing': '英作文', 'speaking': 'スピーキング',
+      'review_word': '単語 復習', 'review_sentence': '短文 復習'
+    };
+    return names[mode] || mode;
+  };
+
+  const doExportFile = () => {
+    const text = onExportText();
+    const blob = new Blob([text], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'english_words.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const triggerFileInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const jsonString = event.target.result;
+      onImportText(jsonString);
+    };
+    reader.onerror = () => {
+      alert("ファイルの読み込みに失敗しました。");
+    };
+    reader.readAsText(file);
+    e.target.value = null; // リセット
+  };
+
+  return (
+    <div className="h-full flex flex-col bg-slate-50">
+      {/* タブ切り替え */}
+      <div className="flex bg-white border-b border-slate-200 shadow-sm z-10 sticky top-0 overflow-x-auto no-scrollbar shrink-0 justify-center">
+        <button 
+          onClick={() => setTab('learn')} 
+          className={`px-3 sm:px-4 py-4 min-w-[80px] sm:w-32 text-xs font-bold transition-colors border-b-2 flex flex-col items-center gap-1 ${tab === 'learn' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+        >
+          <BookOpen size={18} /> 学習
+        </button>
+        <button 
+          onClick={() => setTab('today')} 
+          className={`px-3 sm:px-4 py-4 min-w-[80px] sm:w-32 text-xs font-bold transition-colors border-b-2 flex flex-col items-center gap-1 ${tab === 'today' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+        >
+          <ListChecks size={18} /> 今日の問題
+        </button>
+        <button 
+          onClick={() => setTab('review')} 
+          className={`px-3 sm:px-4 py-4 min-w-[80px] sm:w-32 text-xs font-bold transition-colors border-b-2 flex flex-col items-center gap-1 relative ${tab === 'review' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+        >
+          <History size={18} /> 履歴
+          {(needsReviewWords.length > 0 || needsReviewSentences.length > 0) && (
+            <span className="absolute top-3 right-3 w-2 h-2 rounded-full bg-rose-500"></span>
+          )}
+        </button>
+        <button 
+          onClick={() => setTab('settings')} 
+          className={`px-3 sm:px-4 py-4 min-w-[80px] sm:w-32 text-xs font-bold transition-colors border-b-2 flex flex-col items-center gap-1 ${tab === 'settings' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+        >
+          <Settings size={18} /> データ
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 relative">
+        {tab === 'learn' && (
+          <div className="space-y-8 animate-in fade-in duration-300 max-w-5xl mx-auto w-full pb-8">
+            <div className="text-center mb-8 mt-4">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl mb-4 shadow-inner">
+                <BookOpen size={32} />
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800 mb-2">中学英語マスター</h1>
+              <p className="text-slate-500 text-xs sm:text-sm">毎日の積み重ねで英語力をアップしよう</p>
+            </div>
+
+            {/* 単語テスト セクション */}
+            <div>
+              <div className="flex justify-between items-center mb-3 ml-2 border-b border-indigo-100 pb-2 pr-2">
+                <h2 className="text-sm font-bold text-indigo-500 flex items-center gap-2">
+                  <BookOpen size={18} /> 一問一答 単語 (全約1700問)
+                </h2>
+                <DailyChecksGroup modes={['word_basic', 'word_lvl1', 'word_lvl2', 'word_lvl3', 'word_lvl4']} />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+                <button onClick={() => onStart('word_basic')} className="w-full flex items-center p-3 sm:p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-indigo-300 transition-all group active:scale-[0.98]">
+                  <div className="text-left flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-slate-800 text-[15px]">基本問題</h3>
+                    </div>
+                    <p className="text-[11px] font-bold text-indigo-600 mb-0.5">中1基礎</p>
+                    <p className="text-[10px] text-slate-500">正解: {getCorrectCount(WORDS_BASIC)} / {WORDS_BASIC.length}問</p>
+                  </div>
+                </button>
+                <button onClick={() => onStart('word_lvl1')} className="w-full flex items-center p-3 sm:p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-indigo-300 transition-all group active:scale-[0.98]">
+                  <div className="text-left flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-slate-800 text-[15px]">発展 Lv.1</h3>
+                    </div>
+                    <p className="text-[11px] font-bold text-indigo-600 mb-0.5">小学〜中1</p>
+                    <p className="text-[10px] text-slate-500">正解: {getCorrectCount(WORDS_LEVEL1)} / {WORDS_LEVEL1.length}問</p>
+                  </div>
+                </button>
+                <button onClick={() => onStart('word_lvl2')} className="w-full flex items-center p-3 sm:p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-indigo-300 transition-all group active:scale-[0.98]">
+                  <div className="text-left flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-slate-800 text-[15px]">発展 Lv.2</h3>
+                    </div>
+                    <p className="text-[11px] font-bold text-indigo-600 mb-0.5">中2</p>
+                    <p className="text-[10px] text-slate-500">正解: {getCorrectCount(WORDS_LEVEL2)} / {WORDS_LEVEL2.length}問</p>
+                  </div>
+                </button>
+                <button onClick={() => onStart('word_lvl3')} className="w-full flex items-center p-3 sm:p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-indigo-300 transition-all group active:scale-[0.98]">
+                  <div className="text-left flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-slate-800 text-[15px]">発展 Lv.3</h3>
+                    </div>
+                    <p className="text-[11px] font-bold text-indigo-600 mb-0.5">中3</p>
+                    <p className="text-[10px] text-slate-500">正解: {getCorrectCount(WORDS_LEVEL3)} / {WORDS_LEVEL3.length}問</p>
+                  </div>
+                </button>
+                <button onClick={() => onStart('word_lvl4')} className="w-full flex items-center p-3 sm:p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-indigo-300 transition-all group active:scale-[0.98]">
+                  <div className="text-left flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-slate-800 text-[15px]">発展 Lv.4</h3>
+                    </div>
+                    <p className="text-[11px] font-bold text-indigo-600 mb-0.5">高校受験〜高1</p>
+                    <p className="text-[10px] text-slate-500">正解: {getCorrectCount(WORDS_LEVEL4)} / {WORDS_LEVEL4.length}問</p>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* 短文和訳 セクション */}
+            <div>
+              <div className="flex justify-between items-center mb-3 ml-2 border-b border-emerald-100 pb-2 pr-2">
+                <h2 className="text-sm font-bold text-emerald-500 flex items-center gap-2">
+                  <MessageCircle size={18} /> 短文 和訳 (全210問)
+                </h2>
+                <DailyChecksGroup modes={['sentence_basic', 'sentence_lvl1', 'sentence_lvl2', 'sentence_lvl3']} />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                <button onClick={() => onStart('sentence_basic')} className="w-full flex items-center p-3 sm:p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-emerald-300 transition-all group active:scale-[0.98]">
+                  <div className="text-left flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-slate-800 text-[15px]">基本問題</h3>
+                    </div>
+                    <p className="text-[11px] font-bold text-emerald-600 mb-0.5">中1基礎</p>
+                    <p className="text-[10px] text-slate-500">正解: {getCorrectCount(SENTENCES_BASIC)} / {SENTENCES_BASIC.length}問</p>
+                  </div>
+                </button>
+                <button onClick={() => onStart('sentence_lvl1')} className="w-full flex items-center p-3 sm:p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-emerald-300 transition-all group active:scale-[0.98]">
+                  <div className="text-left flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-slate-800 text-[15px]">短文 Lv.1</h3>
+                    </div>
+                    <p className="text-[11px] font-bold text-emerald-600 mb-0.5">中1後半〜中2前半</p>
+                    <p className="text-[10px] text-slate-500">正解: {getCorrectCount(SENTENCES_LEVEL1)} / {SENTENCES_LEVEL1.length}問</p>
+                  </div>
+                </button>
+                <button onClick={() => onStart('sentence_lvl2')} className="w-full flex items-center p-3 sm:p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-emerald-300 transition-all group active:scale-[0.98]">
+                  <div className="text-left flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-slate-800 text-[15px]">短文 Lv.2</h3>
+                    </div>
+                    <p className="text-[11px] font-bold text-emerald-600 mb-0.5">中2</p>
+                    <p className="text-[10px] text-slate-500">正解: {getCorrectCount(SENTENCES_LEVEL2)} / {SENTENCES_LEVEL2.length}問</p>
+                  </div>
+                </button>
+                <button onClick={() => onStart('sentence_lvl3')} className="w-full flex items-center p-3 sm:p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-emerald-300 transition-all group active:scale-[0.98]">
+                  <div className="text-left flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-slate-800 text-[15px]">短文 Lv.3</h3>
+                    </div>
+                    <p className="text-[11px] font-bold text-emerald-600 mb-0.5">中3</p>
+                    <p className="text-[10px] text-slate-500">正解: {getCorrectCount(SENTENCES_LEVEL3)} / {SENTENCES_LEVEL3.length}問</p>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* アウトプット特訓 セクション */}
+            <div>
+              <h2 className="text-sm font-bold text-orange-400 mb-3 ml-2 flex items-center gap-2 border-b border-orange-100 pb-2">
+                <Mic size={18} /> アウトプット特訓 (基本問題から)
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
+                <button onClick={() => onStart('listening')} className="w-full flex items-center p-3 sm:p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-amber-300 transition-all group active:scale-[0.98]">
+                  <div className="w-10 h-10 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center mr-4 shrink-0"><Ear size={20} /></div>
+                  <div className="text-left flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-slate-800 text-[15px]">リスニング</h3>
+                      <DailyChecks mode="listening" />
+                    </div>
+                    <p className="text-[10px] text-slate-500">聞こえた英単語をタイピング</p>
+                  </div>
+                </button>
+                <button onClick={() => onStart('speaking')} className="w-full flex items-center p-3 sm:p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-pink-300 transition-all group active:scale-[0.98]">
+                  <div className="w-10 h-10 bg-pink-100 text-pink-600 rounded-xl flex items-center justify-center mr-4 shrink-0"><Mic size={20} /></div>
+                  <div className="text-left flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-slate-800 text-[15px]">スピーキング</h3>
+                      <DailyChecks mode="speaking" />
+                    </div>
+                    <p className="text-[10px] text-slate-500">マイクに向かって発音チェック</p>
+                  </div>
+                </button>
+                 <button onClick={() => onStart('writing')} className="w-full flex items-center p-3 sm:p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-orange-300 transition-all group active:scale-[0.98]">
+                  <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center mr-4 shrink-0"><PenTool size={20} /></div>
+                  <div className="text-left flex-1">
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="font-bold text-slate-800 text-[15px]">英作文</h3>
+                      <DailyChecks mode="writing" />
+                    </div>
+                    <p className="text-[10px] text-slate-500">日本語を見て英文をタイピング</p>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === 'today' && (
+           <div className="space-y-6 animate-in fade-in duration-300 max-w-5xl mx-auto w-full pb-8">
+              <h2 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <ListChecks size={18} className="text-emerald-500"/> 今日解いた問題
+              </h2>
+              {todaysRecords.length === 0 ? (
+                <div className="text-center p-6 bg-white rounded-2xl border border-slate-100 text-slate-400 text-sm">
+                  今日学習した問題はまだありません。
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {todaysRecords.map((record, idx) => (
+                    <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+                      <div className="bg-slate-50 px-4 py-2 border-b border-slate-100 flex justify-between items-center text-xs">
+                        <span className="font-bold text-slate-600">{formatModeName(record.mode)}</span>
+                        <span className="text-slate-400">{formatDate(record.date).split(' ')[1]}</span>
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                         {record.results && record.results.map((q, i) => (
+                           <div key={i} className="p-3 flex items-start gap-3">
+                             <div className="pt-0.5 shrink-0">
+                               {q.isCorrect ? <CheckCircle2 size={16} className="text-emerald-500"/> : <XCircle size={16} className="text-rose-500"/>}
+                             </div>
+                             <div className="flex-1 min-w-0">
+                               <p className="font-bold text-slate-800 text-sm truncate">{q.en}</p>
+                               <p className="text-xs text-slate-500 mt-0.5 truncate">{q.ja}</p>
+                             </div>
+                           </div>
+                         ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+           </div>
+        )}
+
+        {tab === 'review' && (
+          <div className="space-y-8 animate-in fade-in duration-300 max-w-5xl mx-auto w-full pb-8">
+            {/* 復習セクション: 優先 */}
+            <div>
+              <h2 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <RefreshCw size={18} className="text-rose-500"/> 優先復習リスト
+              </h2>
+              <p className="text-xs text-slate-500 mb-3 ml-1">1日2回まで実施可能。3回正解でクリア。</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button 
+                  onClick={() => onReview(needsReviewWords, 'word')} 
+                  disabled={!canReviewWord}
+                  className="w-full flex items-center justify-between p-4 bg-white rounded-2xl shadow-sm border border-rose-100 hover:border-rose-400 transition-all disabled:opacity-50 disabled:hover:border-rose-100 active:scale-[0.98]"
+                >
+                  <div className="text-left">
+                    <h3 className="font-bold text-slate-800">単語の復習</h3>
+                    {!canReviewWord && needsReviewWords.length > 0 && <p className="text-[10px] text-rose-500">本日の実施回数上限に達しました</p>}
+                  </div>
+                  <div className="flex items-center gap-3 text-sm font-bold text-rose-500">
+                    {needsReviewWords.length}問 <ArrowRight size={16}/>
+                  </div>
+                </button>
+                
+                <button 
+                  onClick={() => onReview(needsReviewSentences, 'sentence')} 
+                  disabled={!canReviewSentence}
+                  className="w-full flex items-center justify-between p-4 bg-white rounded-2xl shadow-sm border border-rose-100 hover:border-rose-400 transition-all disabled:opacity-50 disabled:hover:border-rose-100 active:scale-[0.98]"
+                >
+                  <div className="text-left">
+                    <h3 className="font-bold text-slate-800">短文の復習</h3>
+                    {!canReviewSentence && needsReviewSentences.length > 0 && <p className="text-[10px] text-rose-500">本日の実施回数上限に達しました</p>}
+                  </div>
+                  <div className="flex items-center gap-3 text-sm font-bold text-rose-500">
+                    {needsReviewSentences.length}問 <ArrowRight size={16}/>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* 復習セクション: 全履歴 */}
+            <div>
+              <h2 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <ListChecks size={18} className="text-indigo-500"/> 過去の全弱点からテスト
+              </h2>
+              <p className="text-xs text-slate-500 mb-3 ml-1">過去に1度でも間違えたことのある全問題から出題</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button 
+                  onClick={() => onReview(allWrongWords, 'word')} 
+                  disabled={allWrongWords.length === 0}
+                  className="w-full flex items-center justify-between p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:border-indigo-300 transition-all disabled:opacity-50 disabled:hover:border-slate-100 active:scale-[0.98]"
+                >
+                  <div className="text-left">
+                    <h3 className="font-bold text-slate-800">全弱点 単語</h3>
+                  </div>
+                  <div className="flex items-center gap-3 text-sm font-bold text-indigo-500">
+                    全{allWrongWords.length}問 <ArrowRight size={16}/>
+                  </div>
+                </button>
+                
+                <button 
+                  onClick={() => onReview(allWrongSentences, 'sentence')} 
+                  disabled={allWrongSentences.length === 0}
+                  className="w-full flex items-center justify-between p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:border-indigo-300 transition-all disabled:opacity-50 disabled:hover:border-slate-100 active:scale-[0.98]"
+                >
+                  <div className="text-left">
+                    <h3 className="font-bold text-slate-800">全弱点 短文</h3>
+                  </div>
+                  <div className="flex items-center gap-3 text-sm font-bold text-indigo-500">
+                    全{allWrongSentences.length}問 <ArrowRight size={16}/>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* 学習履歴セクション (カレンダー) */}
+            <div>
+              <h2 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <CalendarDays size={18} className="text-blue-500"/> 学習カレンダー
+              </h2>
+              
+              {/* カレンダーUI */}
+              <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 mb-4 max-w-2xl">
+                <div className="flex justify-between items-center mb-4 px-2">
+                  <button onClick={prevMonth} className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"><ChevronLeft size={20}/></button>
+                  <div className="font-bold text-slate-800">{year}年 {month + 1}月</div>
+                  <button onClick={nextMonth} className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"><ChevronRight size={20}/></button>
+                </div>
+                <div className="grid grid-cols-7 gap-1 text-center text-xs font-bold text-slate-400 mb-2">
+                  <div className="text-rose-400">日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div className="text-blue-400">土</div>
+                </div>
+                <div className="grid grid-cols-7 gap-1 text-center text-sm">
+                  {calendarDays.map((day, idx) => {
+                    if (!day.isCurrentMonth) return <div key={idx} className="p-1 sm:p-2"></div>;
+                    const records = getRecordsForDate(day.dateStr);
+                    const hasRecord = records.length > 0;
+                    const isSelected = day.dateStr === selectedDateStr;
+                    
+                    return (
+                      <button 
+                        key={idx}
+                        onClick={() => {
+                          setSelectedDate(new Date(year, month, day.number));
+                          setShowHistoryModal(true);
+                        }}
+                        className={`p-1 sm:p-2 rounded-xl flex flex-col items-center justify-center gap-1 transition-colors ${isSelected ? 'bg-blue-600 text-white font-bold shadow-md' : 'text-slate-700 hover:bg-slate-100'}`}
+                      >
+                        <span>{day.number}</span>
+                        <div className="h-1 flex gap-0.5">
+                          {hasRecord && <div className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white' : 'bg-emerald-400'}`}></div>}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === 'settings' && (
+           <div className="space-y-6 animate-in fade-in duration-300 max-w-5xl mx-auto w-full pb-8">
+              <h2 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                <Settings size={18} className="text-slate-500"/> データ管理
+              </h2>
+              <p className="text-sm text-slate-500 mb-4">学習データ（履歴や正答率）をファイルとして書き出したり、別の端末から読み込んだりできます。</p>
+              
+              <div className="space-y-4 max-w-md">
+                 <input 
+                   type="file" 
+                   accept=".json" 
+                   ref={fileInputRef} 
+                   onChange={handleFileChange} 
+                   style={{ display: 'none' }} 
+                 />
+                 
+                 <div className="flex gap-3">
+                   <button 
+                    onClick={doExportFile}
+                    className="flex-1 flex flex-col items-center justify-center p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:border-blue-300 transition-all active:scale-[0.98]"
+                   >
+                     <div className="w-10 h-10 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mb-2"><Download size={20}/></div>
+                     <h3 className="font-bold text-slate-800 text-sm">書き出す(ファイル)</h3>
+                   </button>
+
+                   <button 
+                    onClick={triggerFileInput}
+                    className="flex-1 flex flex-col items-center justify-center p-4 bg-white rounded-2xl shadow-sm border border-slate-100 hover:border-emerald-300 transition-all active:scale-[0.98]"
+                   >
+                     <div className="w-10 h-10 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mb-2"><Upload size={20}/></div>
+                     <h3 className="font-bold text-slate-800 text-sm">読み込む(ファイル)</h3>
+                   </button>
+                 </div>
+              </div>
+           </div>
+        )}
+      </div>
+
+      {/* カレンダー履歴ポップアップモーダル */}
+      {showHistoryModal && (
+        <div className="absolute inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-xl flex flex-col max-h-[80vh]">
+            <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
+              <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                <CalendarDays size={20} className="text-blue-500" />
+                {selectedDate.getMonth() + 1}月{selectedDate.getDate()}日の記録
+              </h3>
+              <button onClick={() => setShowHistoryModal(false)} className="p-2 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 hover:text-slate-800 transition-colors">
+                <XCircle size={20} />
+              </button>
+            </div>
+            
+            <div className="overflow-y-auto space-y-3 flex-1 pr-2 no-scrollbar">
+              {selectedDateRecords.length === 0 ? (
+                <div className="text-center p-6 bg-slate-50 rounded-2xl border border-slate-100 text-slate-400 text-sm">
+                  この日の学習記録はありません。
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {Object.keys(selectedDateRecords.reduce((acc, record) => {
+                    if (!acc[record.mode]) acc[record.mode] = [];
+                    acc[record.mode].push(record);
+                    return acc;
+                  }, {})).map(mode => {
+                    const recs = selectedDateRecords.filter(r => r.mode === mode).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                    const firstRec = recs[0];
+                    const secondRec = recs[1]; 
+                    return (
+                      <div key={mode} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex flex-col gap-3">
+                        <div className="font-bold text-slate-700 text-sm border-b border-slate-100 pb-2">{formatModeName(mode)}</div>
+                        <div className="flex justify-between items-center px-1">
+                          <div className="flex flex-col">
+                            <span className="text-[10px] text-slate-400 mb-1">初回点数</span>
+                            <span className={`text-lg font-black ${firstRec.accuracy >= 80 ? 'text-emerald-500' : 'text-slate-600'}`}>
+                              {firstRec.score}/{firstRec.total} <span className="text-xs font-normal">({firstRec.accuracy}%)</span>
+                            </span>
+                          </div>
+                          <div className="w-px h-8 bg-slate-100 mx-4"></div>
+                          <div className="flex flex-col text-right">
+                            <span className="text-[10px] text-slate-400 mb-1">やり直し点数</span>
+                            {secondRec ? (
+                              <span className={`text-lg font-black ${secondRec.accuracy >= 80 ? 'text-emerald-500' : 'text-slate-600'}`}>
+                                {secondRec.score}/{secondRec.total} <span className="text-xs font-normal">({secondRec.accuracy}%)</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-300 font-medium text-lg">-</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// 結果画面 (解いた問題のリスト付き)
+const ResultView = ({ score, total, mode, results, onBack }) => {
+  const percentage = Math.round((score / total) * 100);
+  let message = "";
+  if (percentage === 100) message = "パーフェクト！素晴らしい！";
+  else if (percentage >= 80) message = "よくできました！";
+  else if (percentage >= 60) message = "あともう少し！頑張ろう！";
+  else message = "次はもっとできるはず！復習しよう。";
+
+  return (
+    <div className="h-full flex flex-col bg-white overflow-y-auto">
+      <div className="p-6 flex flex-col items-center text-center pb-8 border-b border-slate-100 shrink-0">
+        <div className="w-20 h-20 bg-yellow-100 text-yellow-500 rounded-full flex items-center justify-center mb-4 shadow-inner animate-bounce">
+          <Award size={48} />
+        </div>
+        
+        <h2 className="text-2xl font-black text-slate-800 mb-1">結果発表</h2>
+        <p className="text-slate-500 mb-6 font-medium text-sm">{message}</p>
+        
+        <div className="bg-slate-50 w-full max-w-md rounded-2xl p-4 mb-4 border border-slate-100 shadow-sm flex flex-col items-center">
+          <div className="text-xs text-slate-500 mb-1">今回の正答率</div>
+          <div className="flex items-end justify-center gap-2">
+            <span className="text-5xl font-black text-blue-600">{percentage}<span className="text-2xl">%</span></span>
+          </div>
+          <div className="mt-1 text-slate-400 font-medium text-sm">({score} / {total} 問正解)</div>
+        </div>
+
+        <button 
+          onClick={onBack}
+          className="w-full max-w-md py-3.5 bg-slate-800 text-white rounded-xl font-bold text-base shadow-md hover:bg-slate-700 active:scale-[0.98] transition-all flex justify-center items-center gap-2"
+        >
+          <Home size={18} /> ホームに戻る
+        </button>
+      </div>
+
+      {/* 解いた問題のリスト表示 */}
+      <div className="p-6 bg-slate-50 flex-1">
+        <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-sm max-w-5xl mx-auto w-full"><ListChecks size={18}/> 今回のテスト問題</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-w-5xl mx-auto w-full">
+          {results && results.map((r, idx) => (
+            <div key={idx} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex items-start gap-3">
+               <div className="pt-0.5 shrink-0">
+                 {r.isCorrect ? <CheckCircle2 size={18} className="text-emerald-500"/> : <XCircle size={18} className="text-rose-500"/>}
+               </div>
+               <div className="flex-1 min-w-0">
+                 <p className="font-bold text-slate-800 text-sm truncate">{r.item.en}</p>
+                 <p className="text-xs text-slate-500 mt-0.5 truncate">{r.item.ja}</p>
+               </div>
+               <button onClick={() => speakText(r.item.en)} className="p-1 shrink-0 text-slate-300 hover:text-blue-500 transition-colors"><Volume2 size={16}/></button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- メインアプリケーション ---
+export default function App() {
+  const [currentView, setCurrentView] = useState('home'); 
+  const [testMode, setTestMode] = useState(''); 
+  const [questions, setQuestions] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [score, setScore] = useState(0);
+  
+  const [user, setUser] = useState(null);
+  const [historyData, setHistoryData] = useState([]);
+  const [statsData, setStatsData] = useState([]);
+  const testResultsRef = useRef([]);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  // 1. 認証 (Rule 3)
+  useEffect(() => {
+    if (!auth) return;
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) {
+        console.error("Auth error:", e);
+      }
+    };
+    initAuth();
+    
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  // 2. データ取得 (Firestore Listeners)
+  useEffect(() => {
+    if (!user || !db) return;
+
+    const historyRef = collection(db, 'artifacts', appId, 'users', user.uid, 'history');
+    const unsubHistory = onSnapshot(historyRef, (snap) => {
+      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setHistoryData(data);
+    }, (error) => console.error("History fetch error:", error));
+
+    const statsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'items_stats');
+    const unsubStats = onSnapshot(statsRef, (snap) => {
+      const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setStatsData(data);
+    }, (error) => console.error("Stats fetch error:", error));
+
+    return () => {
+      unsubHistory();
+      unsubStats();
+    };
+  }, [user]);
+
+  // データ書き出し（テキスト）
+  const handleExportText = () => {
+    const exportData = { history: historyData, stats: statsData };
+    return JSON.stringify(exportData);
+  };
+
+  // データ読み込み（テキスト）
+  const handleImportText = async (jsonString) => {
+    if (!user || !db) return;
+    
+    if(!window.confirm("現在のデータに上書き・追加されます。よろしいですか？")) {
+       return;
+    }
+
+    try {
+      const importedData = JSON.parse(jsonString);
+      
+      if (importedData && (importedData.stats || importedData.history)) {
+         const statsToImport = Array.isArray(importedData.stats) ? importedData.stats : [];
+         const historyToImport = Array.isArray(importedData.history) ? importedData.history : [];
+         
+         let batch = writeBatch(db);
+         let operationCount = 0;
+
+         const commitBatch = async () => {
+           if (operationCount > 0) {
+             await batch.commit();
+             batch = writeBatch(db); 
+             operationCount = 0;
+           }
+         };
+
+         // stats復元
+         for (const stat of statsToImport) {
+            if(!stat.en) continue;
+            const statId = stat.id ? String(stat.id) : stat.en.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 50);
+            const statRef = doc(db, 'artifacts', appId, 'users', user.uid, 'items_stats', statId);
+            const { id, ...dataToSave } = stat; 
+            batch.set(statRef, dataToSave, { merge: true });
+            operationCount++;
+            if (operationCount >= 400) await commitBatch();
+         }
+         
+         // history復元
+         const historyRefCollection = collection(db, 'artifacts', appId, 'users', user.uid, 'history');
+         for (const hist of historyToImport) {
+            if(!hist.date || !hist.mode) continue;
+            if (hist.id && typeof hist.id === 'string' && hist.id.trim() !== '') {
+              const { id, ...histData } = hist;
+              const histRef = doc(db, 'artifacts', appId, 'users', user.uid, 'history', hist.id);
+              batch.set(histRef, histData, { merge: true });
+            } else {
+              const newHistRef = doc(historyRefCollection); 
+              batch.set(newHistRef, hist);
+            }
+            operationCount++;
+            if (operationCount >= 400) await commitBatch();
+         }
+         
+         await commitBatch(); 
+         
+         alert("データの読み込みが完了しました！");
+      } else {
+         alert("有効なバックアップデータではありません。");
+      }
+    } catch (err) {
+      alert("データの読み込み中にエラーが発生しました。テキストが正しく貼り付けられていない可能性があります。\n" + (err.message || ""));
+      console.error(err);
+    }
+  };
+
+  const startTest = (mode) => {
+    setTestMode(mode);
+    setScore(0);
+    setCurrentIndex(0);
+    testResultsRef.current = []; 
+    
+    let targetData = [];
+    if (mode === 'word_basic') targetData = WORDS_BASIC;
+    else if (mode === 'word_lvl1') targetData = WORDS_LEVEL1;
+    else if (mode === 'word_lvl2') targetData = WORDS_LEVEL2;
+    else if (mode === 'word_lvl3') targetData = WORDS_LEVEL3;
+    else if (mode === 'sentence_lvl1') targetData = SENTENCES_LEVEL1;
+    else if (mode === 'sentence_lvl2') targetData = SENTENCES_LEVEL2;
+    else if (mode === 'sentence_lvl3') targetData = SENTENCES_LEVEL3;
+    else if (mode === 'sentence_lvl4') targetData = SENTENCES_LEVEL4;
+    else if (mode === 'sentence_lvl5') targetData = SENTENCES_LEVEL5;
+    else if (mode === 'listening' || mode === 'speaking') targetData = [...WORDS_BASIC, ...WORDS_LEVEL1];
+    else if (mode === 'writing') targetData = SENTENCES_LEVEL1;
+    
+    const count = mode.includes('word') || mode === 'listening' || mode === 'speaking' ? 10 : 5;
+    setQuestions(shuffle(targetData).slice(0, count));
+
+    // viewの決定
+    let nextView = '';
+    if (mode.includes('word')) nextView = 'word';
+    else if (mode.includes('sentence')) nextView = 'sentence';
+    else nextView = mode; // listening, writing, speaking
+    
+    setCurrentView(nextView);
+  };
+
+  const startReviewTest = (reviewItems, type) => {
+    const targetQuestions = shuffle([...reviewItems]).slice(0, 10).map(item => ({ en: item.en, ja: item.ja }));
+    setQuestions(targetQuestions);
+    setTestMode(type === 'word' ? 'review_word' : 'review_sentence');
+    setCurrentIndex(0);
+    setScore(0);
+    testResultsRef.current = [];
+    setCurrentView(type === 'word' ? 'word' : 'sentence'); 
+  };
+
+  const handleAnswer = (isCorrect) => {
+    const isSentenceMode = ['sentence', 'review_sentence', 'writing', 'speaking'].includes(currentView) || testMode.includes('sentence');
+    const type = isSentenceMode ? 'sentence' : 'word';
+    testResultsRef.current.push({ item: questions[currentIndex], isCorrect, type });
+  };
+
+  const finishTest = async () => {
+    if (user && db && testResultsRef.current.length > 0) {
+      try {
+        const finalScore = testResultsRef.current.filter(r => r.isCorrect).length;
+        const total = testResultsRef.current.length;
+        
+        const historyRef = collection(db, 'artifacts', appId, 'users', user.uid, 'history');
+        await addDoc(historyRef, {
+          date: new Date().toISOString(),
+          mode: testMode,
+          score: finalScore,
+          total: total,
+          accuracy: Math.round((finalScore / total) * 100),
+          results: testResultsRef.current.map(r => ({ en: r.item.en, ja: r.item.ja, isCorrect: r.isCorrect }))
+        });
+
+        const promises = testResultsRef.current.map(async (res) => {
+          const safeId = res.item.en.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 50); 
+          const statRef = doc(db, 'artifacts', appId, 'users', user.uid, 'items_stats', safeId);
+          
+          const snap = await getDoc(statRef);
+          let data = snap.exists() ? snap.data() : { en: res.item.en, ja: res.item.ja, correctCount: 0, wrongCount: 0, type: res.type, reviewCorrectCount: 0, needsReview: false };
+          
+          if (data.reviewCorrectCount === undefined) data.reviewCorrectCount = 0;
+          if (data.needsReview === undefined) data.needsReview = data.wrongCount > 0;
+          
+          if (res.isCorrect) {
+            data.correctCount += 1;
+            data.reviewCorrectCount += 1;
+            if (data.reviewCorrectCount >= 3) data.needsReview = false;
+          } else {
+            data.wrongCount += 1;
+            data.reviewCorrectCount = 0; 
+            data.needsReview = true; 
+          }
+          data.lastResult = res.isCorrect;
+          
+          await setDoc(statRef, data);
+        });
+        await Promise.all(promises);
+      } catch(e) {
+        console.error("Save error:", e);
+      }
+    }
+    setCurrentView('result');
+  };
+
+  const renderView = () => {
+    switch (currentView) {
+      case 'home': 
+        return <HomeView onStart={startTest} statsData={statsData} historyData={historyData} onReview={startReviewTest} onExportText={handleExportText} onImportText={handleImportText} />;
+      case 'word': 
+        return <WordTest questions={questions} currentIndex={currentIndex} setCurrentIndex={setCurrentIndex} score={score} setScore={setScore} onFinish={finishTest} wordsData={ALL_WORDS} onAnswer={handleAnswer} />;
+      case 'sentence': 
+        return <SentenceTest questions={questions} currentIndex={currentIndex} setCurrentIndex={setCurrentIndex} score={score} setScore={setScore} onFinish={finishTest} onAnswer={handleAnswer} />;
+      case 'listening': 
+        return <ListeningTest questions={questions} currentIndex={currentIndex} setCurrentIndex={setCurrentIndex} score={score} setScore={setScore} onFinish={finishTest} onAnswer={handleAnswer} />;
+      case 'writing': 
+        return <WritingTest questions={questions} currentIndex={currentIndex} setCurrentIndex={setCurrentIndex} score={score} setScore={setScore} onFinish={finishTest} onAnswer={handleAnswer} />;
+      case 'speaking': 
+        return <SpeakingTest questions={questions} currentIndex={currentIndex} setCurrentIndex={setCurrentIndex} score={score} setScore={setScore} onFinish={finishTest} onAnswer={handleAnswer} />;
+      case 'result': 
+        return <ResultView score={score} total={questions.length} mode={testMode} results={testResultsRef.current} onBack={() => setCurrentView('home')} />;
+      default: 
+        return <HomeView onStart={startTest} statsData={statsData} historyData={historyData} onReview={startReviewTest} onExportText={handleExportText} onImportText={handleImportText} />;
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-100 font-sans flex justify-center items-center">
+      <div className="w-full h-full bg-white shadow-2xl overflow-hidden flex flex-col relative">
+        
+        {/* ヘッダー */}
+        <div className="bg-white text-slate-800 px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-100 flex justify-between items-center z-20 relative shadow-sm shrink-0">
+            <span className="font-extrabold text-lg flex items-center gap-2">
+              <span className="w-8 h-8 bg-blue-600 text-white rounded-lg flex items-center justify-center text-sm shadow-inner">英</span>
+              中学英語
+            </span>
+            {currentView !== 'home' && currentView !== 'result' && (
+                <button 
+                  onClick={() => setShowConfirm(true)} 
+                  className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-full transition"
+                  title="ホームに戻る"
+                >
+                  <Home size={20}/>
+                </button>
+            )}
+        </div>
+
+        {/* 中断確認モーダル */}
+        <ConfirmModal 
+          isOpen={showConfirm} 
+          title="テストを終了しますか？"
+          message="現在の進行状況や正解・不正解の記録は保存されません。"
+          onCancel={() => setShowConfirm(false)}
+          onConfirm={() => {
+            setShowConfirm(false);
+            setCurrentView('home');
+          }}
+        />
+
+        {/* メインコンテンツエリア */}
+        <div className="flex-1 overflow-hidden relative bg-slate-50/50">
+           {renderView()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+    // --- アプリのマウント ---
+    createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
