@@ -86,6 +86,94 @@
     })();
   </script>
 
+  <!-- iOS Safari 用 SpeechRecognition フォールバック（文字入力で代用） -->
+  <script>
+    (function () {
+      var ua = navigator.userAgent || '';
+      var isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+      // iPadOS 13+ は "Macintosh" を名乗るがタッチ可（=実機 iPad）
+      if (!isIOS && ua.indexOf('Macintosh') !== -1 && navigator.maxTouchPoints > 1) {
+        isIOS = true;
+      }
+      if (!isIOS) return;
+      // ネイティブ実装があり、かつインスタンス化できるなら触らない
+      var Native = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (Native) {
+        try {
+          new Native();
+          return;
+        } catch (e) {
+          // 失敗 → フォールバックへ
+        }
+      }
+      function FallbackRecognition() {
+        this.lang = 'en-US';
+        this.continuous = false;
+        this.interimResults = false;
+        this.maxAlternatives = 1;
+        this.onstart = null;
+        this.onresult = null;
+        this.onerror = null;
+        this.onend = null;
+        this.onspeechstart = null;
+        this.onspeechend = null;
+        this.onaudiostart = null;
+        this.onaudioend = null;
+      }
+      FallbackRecognition.prototype.start = function () {
+        var self = this;
+        setTimeout(function () {
+          if (typeof self.onstart === 'function') {
+            try { self.onstart({}); } catch (e) {}
+          }
+          var text = window.prompt(
+            'iPhone / iPad の Safari は音声認識に対応していません。\n回答を文字で入力してください。',
+            ''
+          );
+          if (text && text.trim() !== '' && typeof self.onresult === 'function') {
+            var alt = { transcript: text, confidence: 1 };
+            var resultItem = [alt];
+            resultItem.isFinal = true;
+            resultItem.item = function (i) { return this[i]; };
+            var results = [resultItem];
+            results.item = function (i) { return results[i]; };
+            try {
+              self.onresult({
+                results: results,
+                resultIndex: 0,
+                type: 'result'
+              });
+            } catch (e) {}
+          } else if ((!text || text.trim() === '') && typeof self.onerror === 'function') {
+            try { self.onerror({ error: 'no-speech' }); } catch (e) {}
+          }
+          if (typeof self.onend === 'function') {
+            try { self.onend({}); } catch (e) {}
+          }
+        }, 50);
+      };
+      FallbackRecognition.prototype.stop = function () {
+        if (typeof this.onend === 'function') {
+          try { this.onend({}); } catch (e) {}
+        }
+      };
+      FallbackRecognition.prototype.abort = function () {
+        if (typeof this.onend === 'function') {
+          try { this.onend({}); } catch (e) {}
+        }
+      };
+      FallbackRecognition.prototype.addEventListener = function (type, fn) {
+        this['on' + type] = fn;
+      };
+      FallbackRecognition.prototype.removeEventListener = function (type) {
+        this['on' + type] = null;
+      };
+      window.SpeechRecognition = FallbackRecognition;
+      window.webkitSpeechRecognition = FallbackRecognition;
+      console.info('[fallback] SpeechRecognition shim installed for iOS Safari');
+    })();
+  </script>
+
   <script type="text/babel" data-type="module" data-presets="react">
     import { createRoot } from 'react-dom/client';
 
