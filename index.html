@@ -120,38 +120,116 @@
         this.onaudiostart = null;
         this.onaudioend = null;
       }
+      // 入力ダイアログを DOM で作る（prompt() は iOS でユーザージェスチャーが
+      // 切れていると表示されず null を返すことがあるため、DOM ベースで実装）
       FallbackRecognition.prototype.start = function () {
         var self = this;
-        setTimeout(function () {
-          if (typeof self.onstart === 'function') {
-            try { self.onstart({}); } catch (e) {}
-          }
-          var text = window.prompt(
-            'iPhone / iPad の Safari は音声認識に対応していません。\n回答を文字で入力してください。',
-            ''
-          );
-          if (text && text.trim() !== '' && typeof self.onresult === 'function') {
-            var alt = { transcript: text, confidence: 1 };
+        // onstart は同期で発火
+        if (typeof self.onstart === 'function') {
+          try { self.onstart({}); } catch (e) {}
+        }
+        // 二重起動防止
+        if (document.querySelector('[data-fallback-mic="1"]')) return;
+
+        var modal = document.createElement('div');
+        modal.setAttribute('data-fallback-mic', '1');
+        modal.style.cssText = 'position:fixed;inset:0;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.55);z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:16px;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;';
+        var inner = document.createElement('div');
+        inner.style.cssText = 'background:#fff;border-radius:14px;max-width:380px;width:100%;padding:18px;box-shadow:0 12px 40px rgba(0,0,0,0.3);box-sizing:border-box;';
+        var title = document.createElement('div');
+        title.textContent = '🎤 文字入力で代用';
+        title.style.cssText = 'font-weight:700;font-size:15px;margin-bottom:6px;color:#111;';
+        var msg = document.createElement('div');
+        msg.textContent = 'iPhone / iPad の Safari は音声認識に対応していません。回答を文字で入力してください。';
+        msg.style.cssText = 'font-size:12.5px;color:#555;line-height:1.5;margin-bottom:10px;';
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.setAttribute('autocomplete', 'off');
+        input.setAttribute('autocapitalize', 'off');
+        input.setAttribute('autocorrect', 'off');
+        input.setAttribute('spellcheck', 'false');
+        input.style.cssText = 'width:100%;box-sizing:border-box;padding:9px 10px;font-size:16px;border:1px solid #d1d5db;border-radius:8px;outline:none;margin-bottom:12px;';
+        var btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+        var cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.textContent = 'キャンセル';
+        cancelBtn.style.cssText = 'padding:8px 14px;border:1px solid #d1d5db;background:#f9fafb;border-radius:8px;font-size:13px;cursor:pointer;color:#374151;';
+        var okBtn = document.createElement('button');
+        okBtn.type = 'button';
+        okBtn.textContent = 'OK';
+        okBtn.style.cssText = 'padding:8px 16px;border:none;background:#3b82f6;color:#fff;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;';
+        btnRow.appendChild(cancelBtn);
+        btnRow.appendChild(okBtn);
+        inner.appendChild(title);
+        inner.appendChild(msg);
+        inner.appendChild(input);
+        inner.appendChild(btnRow);
+        modal.appendChild(inner);
+        (document.body || document.documentElement).appendChild(modal);
+        setTimeout(function () { try { input.focus(); } catch (e) {} }, 30);
+
+        var done = false;
+        var finish = function (text) {
+          if (done) return;
+          done = true;
+          try { if (modal.parentNode) modal.parentNode.removeChild(modal); } catch (e) {}
+          var trimmed = text != null ? String(text).trim() : '';
+          if (trimmed !== '' && typeof self.onresult === 'function') {
+            var alt = { transcript: trimmed, confidence: 1 };
             var resultItem = [alt];
             resultItem.isFinal = true;
             resultItem.item = function (i) { return this[i]; };
             var results = [resultItem];
             results.item = function (i) { return results[i]; };
             try {
-              self.onresult({
-                results: results,
-                resultIndex: 0,
-                type: 'result'
-              });
+              self.onresult({ results: results, resultIndex: 0, type: 'result' });
             } catch (e) {}
-          } else if ((!text || text.trim() === '') && typeof self.onerror === 'function') {
-            try { self.onerror({ error: 'no-speech' }); } catch (e) {}
+          } else if (trimmed === '' && typeof self.onerror === 'function') {
+            try { self.onerror({ error: 'aborted' }); } catch (e) {}
           }
           if (typeof self.onend === 'function') {
             try { self.onend({}); } catch (e) {}
           }
-        }, 50);
+        };
+        okBtn.addEventListener('click', function () { finish(input.value); });
+        cancelBtn.addEventListener('click', function () { finish(null); });
+        input.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') { ev.preventDefault(); finish(input.value); }
+          else if (ev.key === 'Escape') { ev.preventDefault(); finish(null); }
+        });
+        // 背景タップでキャンセル
+        modal.addEventListener('click', function (ev) {
+          if (ev.target === modal) finish(null);
+        });
       };
+
+      // navigator.mediaDevices.getUserMedia を iOS ではダミーストリームで返す
+      // （一問一答側がマイク許可を取得しようとしてエラーを吐くケースへの対応）
+      try {
+        if (navigator && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
+          var origGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+          navigator.mediaDevices.getUserMedia = function (constraints) {
+            if (constraints && constraints.audio && !constraints.video) {
+              try {
+                var AC = window.AudioContext || window.webkitAudioContext;
+                if (AC) {
+                  var ctx = new AC();
+                  var dest = ctx.createMediaStreamDestination();
+                  return Promise.resolve(dest.stream);
+                }
+              } catch (e) {}
+              return origGUM(constraints).catch(function () {
+                // エラーしてもダミーストリームを返して処理を継続させる
+                return { getTracks: function () { return []; }, getAudioTracks: function () { return []; }, getVideoTracks: function () { return []; }, addTrack: function () {}, removeTrack: function () {}, active: false, id: 'fallback-stream' };
+              });
+            }
+            return origGUM(constraints);
+          };
+        }
+      } catch (e) {
+        console.warn('[fallback] getUserMedia patch failed:', e);
+      }
       FallbackRecognition.prototype.stop = function () {
         if (typeof this.onend === 'function') {
           try { this.onend({}); } catch (e) {}
