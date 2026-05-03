@@ -257,17 +257,25 @@
     (function () {
       // SpeechRecognition インスタンスを追跡するためのラッパー
       window.__activeRecognitions = window.__activeRecognitions || new Set();
+      window.__micOffActive = false;
       ['SpeechRecognition', 'webkitSpeechRecognition'].forEach(function (key) {
         var Original = window[key];
         if (!Original || Original.__micTrackWrapped) return;
         function Wrapped() {
           var instance = new Original();
+          // start() をラップして、マイクオフ中は再開を拒否
+          var origStart = instance.start && instance.start.bind(instance);
+          if (origStart) {
+            instance.start = function () {
+              if (window.__micOffActive) return;
+              try { return origStart(); } catch (e) {}
+            };
+          }
           try { window.__activeRecognitions.add(instance); } catch (e) {}
+          // 連続認識モードでは end の後に同じインスタンスが再開されるため、
+          // end では Set から削除しない。error 時のみ追跡を解除する。
           try {
             if (instance.addEventListener) {
-              instance.addEventListener('end', function () {
-                try { window.__activeRecognitions.delete(instance); } catch (e) {}
-              });
               instance.addEventListener('error', function () {
                 try { window.__activeRecognitions.delete(instance); } catch (e) {}
               });
@@ -282,10 +290,15 @@
 
       // グローバルな「マイクをオフ」関数
       window.__stopAllMics = async function () {
+        // マイクオフ要求フラグを立てる（start() ラップ側で再開を拒否させる）
+        window.__micOffActive = true;
         // 起動中の SpeechRecognition をすべて停止
         try {
           var recs = Array.from(window.__activeRecognitions || []);
           recs.forEach(function (r) {
+            // React 側の自動再開コードが走らないよう onend を無効化
+            try { r.onend = null; } catch (e) {}
+            try { r.continuous = false; } catch (e) {}
             try { r.abort && r.abort(); } catch (e) {}
             try { r.stop && r.stop(); } catch (e) {}
           });
@@ -300,6 +313,8 @@
             stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
           }
         } catch (e) {}
+        // 5秒後に再開可能に戻す（次回ボタンで認識を再開できるようにする）
+        setTimeout(function () { window.__micOffActive = false; }, 5000);
       };
 
       // 画面右下にマイクオフボタンを注入
