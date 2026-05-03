@@ -2712,15 +2712,18 @@ export default function App() {
     else if (mode === 'word_lvl1') targetData = WORDS_LEVEL1;
     else if (mode === 'word_lvl2') targetData = WORDS_LEVEL2;
     else if (mode === 'word_lvl3') targetData = WORDS_LEVEL3;
+    else if (mode === 'word_lvl4') targetData = WORDS_LEVEL4;
+    else if (mode === 'sentence_basic') targetData = SENTENCES_BASIC;
     else if (mode === 'sentence_lvl1') targetData = SENTENCES_LEVEL1;
     else if (mode === 'sentence_lvl2') targetData = SENTENCES_LEVEL2;
     else if (mode === 'sentence_lvl3') targetData = SENTENCES_LEVEL3;
     else if (mode === 'sentence_lvl4') targetData = SENTENCES_LEVEL4;
     else if (mode === 'sentence_lvl5') targetData = SENTENCES_LEVEL5;
-    else if (mode === 'listening' || mode === 'speaking') targetData = [...WORDS_BASIC, ...WORDS_LEVEL1];
+    else if (mode === 'listening') targetData = [...WORDS_BASIC, ...WORDS_LEVEL1];
+    else if (mode === 'speaking') targetData = [...SENTENCES_BASIC, ...SENTENCES_LEVEL1, ...SENTENCES_LEVEL2, ...SENTENCES_LEVEL3];
     else if (mode === 'writing') targetData = SENTENCES_LEVEL1;
     
-    const count = mode.includes('word') || mode === 'listening' || mode === 'speaking' ? 10 : 5;
+    const count = mode.includes('word') || mode === 'listening' ? 10 : 5;
     setQuestions(shuffle(targetData).slice(0, count));
 
     // viewの決定
