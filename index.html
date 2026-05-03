@@ -1105,6 +1105,14 @@ const WordTest = ({ questions, currentIndex, setCurrentIndex, score, setScore, o
   const [speechPassed, setSpeechPassed] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [recognizedText, setRecognizedText] = useState('');
+  // 入力モード ('mic' = 音声 / 'text' = キーボード入力)
+  const [inputMode, setInputMode] = useState(() => {
+    try { return localStorage.getItem('english-quiz:wordInputMode') || 'mic'; } catch (e) { return 'mic'; }
+  });
+  const [typedText, setTypedText] = useState('');
+  useEffect(() => {
+    try { localStorage.setItem('english-quiz:wordInputMode', inputMode); } catch (e) {}
+  }, [inputMode]);
   const currentQ = questions[currentIndex];
 
   useEffect(() => {
@@ -1117,6 +1125,7 @@ const WordTest = ({ questions, currentIndex, setCurrentIndex, score, setScore, o
       setSpeechPassed(false);
       setIsListening(false);
       setRecognizedText('');
+      setTypedText('');
     }
   }, [currentIndex, questions, wordsData]);
 
@@ -1218,22 +1227,68 @@ const WordTest = ({ questions, currentIndex, setCurrentIndex, score, setScore, o
 
           {!speechPassed ? (
             <div className="flex flex-col items-center animate-in fade-in duration-300 mb-4 bg-slate-50 p-6 rounded-2xl border border-slate-100">
-               <p className="text-slate-500 text-sm mb-4 font-bold">マイクを押して発音してください</p>
-               <button 
-                onClick={startListening}
-                disabled={isListening}
-                className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-md mb-4 ${isListening ? 'bg-rose-500 text-white animate-pulse' : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95'}`}
-              >
-                <Mic size={32} />
-              </button>
+               <div className="flex gap-1 mb-4 p-1 bg-white rounded-xl border border-slate-200">
+                 <button
+                   onClick={() => setInputMode('mic')}
+                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${inputMode === 'mic' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                 >
+                   <Mic size={14} /> マイク
+                 </button>
+                 <button
+                   onClick={() => setInputMode('text')}
+                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${inputMode === 'text' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                 >
+                   <PenTool size={14} /> 文字入力
+                 </button>
+               </div>
+               {inputMode === 'mic' ? (
+                 <>
+                   <p className="text-slate-500 text-sm mb-4 font-bold">マイクを押して発音してください</p>
+                   <button 
+                     onClick={startListening}
+                     disabled={isListening}
+                     className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-md mb-4 ${isListening ? 'bg-rose-500 text-white animate-pulse' : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95'}`}
+                   >
+                     <Mic size={32} />
+                   </button>
+                 </>
+               ) : (
+                 <>
+                   <p className="text-slate-500 text-sm mb-3 font-bold">英単語を入力してください</p>
+                   <form
+                     onSubmit={(e) => {
+                       e.preventDefault();
+                       const t = typedText.trim();
+                       if (!t) return;
+                       setRecognizedText(t);
+                       checkAnswer(t);
+                     }}
+                     className="w-full max-w-xs flex flex-col items-stretch gap-2 mb-2"
+                   >
+                     <input
+                       type="text"
+                       value={typedText}
+                       onChange={(e) => setTypedText(e.target.value)}
+                       autoCapitalize="off"
+                       autoCorrect="off"
+                       spellCheck={false}
+                       placeholder="ここに英単語を入力"
+                       className="w-full px-4 py-3 text-lg border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:outline-none text-center font-mono bg-white"
+                     />
+                     <button type="submit" className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 active:scale-95 transition-all">
+                       送信
+                     </button>
+                   </form>
+                 </>
+               )}
               {recognizedText && (
                  <div className="text-center w-full">
-                    <p className="text-xs text-slate-400">ステータス:</p>
+                    <p className="text-xs text-slate-400">{inputMode === 'mic' ? 'ステータス:' : '入力:'}</p>
                     <p className={`font-mono text-base font-bold px-2 break-words ${recognizedText === '聞き取っています...' ? 'text-slate-400' : 'text-rose-500'}`}>{recognizedText}</p>
                  </div>
               )}
               <button onClick={() => setSpeechPassed(true)} className="mt-4 text-xs text-slate-400 underline hover:text-slate-600 p-2">
-                発音をスキップする
+                {inputMode === 'mic' ? '発音をスキップする' : '入力をスキップする'}
               </button>
             </div>
           ) : (
