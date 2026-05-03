@@ -2064,7 +2064,7 @@ const HomeView = ({ onStart, statsData, historyData, onReview, onExportText, onI
   };
   const todayWordRecords = todaysRecords.filter(r => r && typeof r.mode === 'string' && r.mode.startsWith('word_'));
   const todaySentenceRecords = todaysRecords.filter(r => r && typeof r.mode === 'string' && r.mode.startsWith('sentence_'));
-  const todayOutputRecords = todaysRecords.filter(r => r && ['listening', 'speaking', 'writing'].includes(r.mode));
+  const todayOutputRecords = todaysRecords.filter(r => r && typeof r.mode === 'string' && (r.mode === 'listening' || ((r.mode.startsWith('writing') || r.mode.startsWith('speaking')) && r.mode !== 'review_writing')));
   const dcVocab = (dailyChecks && typeof dailyChecks.vocab === 'number') ? dailyChecks.vocab : 0;
   const dcSentence = (dailyChecks && typeof dailyChecks.sentence === 'number') ? dailyChecks.sentence : 0;
   const dcOutputs = (dailyChecks && Array.isArray(dailyChecks.outputs)) ? dailyChecks.outputs : [];
@@ -2073,13 +2073,44 @@ const HomeView = ({ onStart, statsData, historyData, onReview, onExportText, onI
   const todayVocabChecks = hasWord80 ? 2 : Math.max(dcVocab, Math.min(todayWordRecords.length, 2));
   const todaySentenceChecks = hasSentence80 ? 2 : Math.max(dcSentence, Math.min(todaySentenceRecords.length, 2));
   const todayOutputChecks = (() => {
+    // 復習を全部終えたら、アウトプット特訓のチェックを自動的に満点にする
+    const _reviewWordCount = todaysRecords.filter(r => r.mode === 'review_word').length;
+    const _reviewSentenceCount = todaysRecords.filter(r => r.mode === 'review_sentence' || r.mode === 'review_writing').length;
+    const _wordsNeedReview = statsData.filter(d => d.needsReview && d.type === 'word').length;
+    const _sentencesNeedReview = statsData.filter(d => d.needsReview && d.type === 'sentence').length;
+    const _reviewAllDone =
+      (_reviewWordCount >= 1 || _wordsNeedReview === 0) &&
+      (_reviewSentenceCount >= 1 || _sentencesNeedReview === 0) &&
+      (todayWordRecords.length > 0 || todaySentenceRecords.length > 0);
+    if (_reviewAllDone) return 3;
     const passed = new Set();
     let anyAcc = false;
     todayOutputRecords.forEach(r => {
       const a = computeAcc(r);
       if (a !== null) {
         anyAcc = true;
-        if (a >= 80) passed.add(r.mode);
+        let key = null;
+        if (r.mode === 'listening') key = 'listening';
+        else if (typeof r.mode === 'string' && r.mode.startsWith('writing') && r.mode !== 'review_writing') key = 'writing';
+        else if (typeof r.mode === 'string' && r.mode.startsWith('speaking')) key = 'speaking';
+        if (!key) return;
+        if (a >= 80) {
+          passed.add(key);
+        } else {
+          // 80点未満でも、間違えた問題が履歴復習で全て解決済みならチェックを付ける
+          const wrongItems = Array.isArray(r.results) ? r.results.filter(x => x && !x.isCorrect) : [];
+          if (wrongItems.length === 0) {
+            passed.add(key);
+          } else {
+            const allReviewed = wrongItems.every(wi => {
+              const stat = statsData.find(d => d && d.en === wi.en);
+              if (!stat) return false;
+              if (key === 'writing') return stat.needsWritingReview === false;
+              return stat.needsReview === false;
+            });
+            if (allReviewed) passed.add(key);
+          }
+        }
       }
     });
     return anyAcc ? passed.size : dcOutputs.length;
@@ -2118,13 +2149,16 @@ const HomeView = ({ onStart, statsData, historyData, onReview, onExportText, onI
   // --- 復習対象の抽出 ---
   const needsReviewWords = statsData.filter(d => d.needsReview && d.type === 'word');
   const needsReviewSentences = statsData.filter(d => d.needsReview && d.type === 'sentence');
+  const needsReviewWritings = statsData.filter(d => d.needsWritingReview && d.type === 'sentence');
   const allWrongWords = statsData.filter(d => d.wrongCount > 0 && d.type === 'word');
   const allWrongSentences = statsData.filter(d => d.wrongCount > 0 && d.type === 'sentence');
 
   const reviewWordCountToday = todaysRecords.filter(r => r.mode === 'review_word').length;
   const reviewSentenceCountToday = todaysRecords.filter(r => r.mode === 'review_sentence').length;
-  const canReviewWord = reviewWordCountToday < 2 && needsReviewWords.length > 0;
-  const canReviewSentence = reviewSentenceCountToday < 2 && needsReviewSentences.length > 0;
+  const reviewWritingCountToday = todaysRecords.filter(r => r.mode === 'review_writing').length;
+  const canReviewWord = needsReviewWords.length > 0;
+  const canReviewSentence = needsReviewSentences.length > 0;
+  const canReviewWriting = needsReviewWritings.length > 0;
 
   // --- カレンダー処理 ---
   const getDaysInMonth = (year, month) => new Date(year, month + 1, 0).getDate();
@@ -2166,8 +2200,10 @@ const HomeView = ({ onStart, statsData, historyData, onReview, onExportText, onI
       'word_basic': '単語 基本', 'word_lvl1': '単語 Lv.1', 'word_lvl2': '単語 Lv.2', 'word_lvl3': '単語 Lv.3',
       'sentence_lvl1': '短文 Lv.1', 'sentence_lvl2': '短文 Lv.2', 'sentence_lvl3': '短文 Lv.3', 'sentence_lvl4': '短文 Lv.4', 'sentence_lvl5': '短文 Lv.5',
       'word': '単語 旧基本', 'sentence': '短文 旧基本',
-      'listening': 'リスニング', 'writing': '英作文', 'speaking': 'スピーキング',
-      'review_word': '単語 復習', 'review_sentence': '短文 復習'
+      'listening': 'リスニング', 'writing': 'ライティング', 'speaking': 'スピーキング',
+      'writing_basic': 'ライティング 基本', 'writing_lvl1': 'ライティング Lv.1', 'writing_lvl2': 'ライティング Lv.2', 'writing_lvl3': 'ライティング Lv.3',
+      'speaking_basic': 'スピーキング 基本', 'speaking_lvl1': 'スピーキング Lv.1', 'speaking_lvl2': 'スピーキング Lv.2', 'speaking_lvl3': 'スピーキング Lv.3',
+      'review_word': '単語 復習', 'review_sentence': '短文 復習', 'review_writing': 'ライティング 復習'
     };
     return names[mode] || mode;
   };
@@ -2363,7 +2399,7 @@ const HomeView = ({ onStart, statsData, historyData, onReview, onExportText, onI
               <h2 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
                 <RefreshCw size={18} className="text-rose-500"/> 優先復習リスト
               </h2>
-              <p className="text-xs text-slate-500 mb-3 ml-1">1日2回まで実施可能。3回正解でクリア。</p>
+              <p className="text-xs text-slate-500 mb-3 ml-1">1回正解したら復習リストから外れます。何回でも振り返可。</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <button 
                   onClick={() => onReview(needsReviewWords, 'word')} 
@@ -2385,11 +2421,25 @@ const HomeView = ({ onStart, statsData, historyData, onReview, onExportText, onI
                   className="w-full flex items-center justify-between p-4 bg-white rounded-2xl shadow-sm border border-rose-100 hover:border-rose-400 transition-all disabled:opacity-50 disabled:hover:border-rose-100 active:scale-[0.98]"
                 >
                   <div className="text-left">
-                    <h3 className="font-bold text-slate-800">短文の復習</h3>
+                    <h3 className="font-bold text-slate-800">短文の復習（和訳）</h3>
                     {!canReviewSentence && needsReviewSentences.length > 0 && <p className="text-[10px] text-rose-500">本日の実施回数上限に達しました</p>}
                   </div>
                   <div className="flex items-center gap-3 text-sm font-bold text-rose-500">
                     {needsReviewSentences.length}問 <ArrowRight size={16}/>
+                  </div>
+                </button>
+
+                <button 
+                  onClick={() => onReview(needsReviewWritings, 'writing')} 
+                  disabled={!canReviewWriting}
+                  className="w-full flex items-center justify-between p-4 bg-white rounded-2xl shadow-sm border border-rose-100 hover:border-rose-400 transition-all disabled:opacity-50 disabled:hover:border-rose-100 active:scale-[0.98] md:col-span-2"
+                >
+                  <div className="text-left">
+                    <h3 className="font-bold text-slate-800">ライティング（書き取り）で復習</h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">書き取りで正解した場合のみ、この復習リストから外れます</p>
+                  </div>
+                  <div className="flex items-center gap-3 text-sm font-bold text-rose-500">
+                    {needsReviewWritings.length}問 <ArrowRight size={16}/>
                   </div>
                 </button>
               </div>
@@ -2452,7 +2502,34 @@ const HomeView = ({ onStart, statsData, historyData, onReview, onExportText, onI
                     const records = getRecordsForDate(day.dateStr);
                     const hasRecord = records.length > 0;
                     const isSelected = day.dateStr === selectedDateStr;
-                    
+
+                    // 7つのチェック達成数を集計（vocab: 0-2, sentence: 0-2, outputs: 0-3）
+                    let vocabCnt = 0, sentenceCnt = 0;
+                    const outputSet = new Set();
+                    records.forEach(r => {
+                      const m = r && r.mode;
+                      if (typeof m !== 'string') return;
+                      if (m === 'word' || m.startsWith('word_')) {
+                        vocabCnt = Math.min(2, vocabCnt + 1);
+                      } else if (m === 'sentence' || m.startsWith('sentence_')) {
+                        sentenceCnt = Math.min(2, sentenceCnt + 1);
+                      } else if (m === 'listening') {
+                        outputSet.add('listening');
+                      } else if (m.startsWith('writing') && m !== 'review_writing') {
+                        outputSet.add('writing');
+                      } else if (m.startsWith('speaking')) {
+                        outputSet.add('speaking');
+                      }
+                    });
+                    const totalChecks = vocabCnt + sentenceCnt + outputSet.size;
+
+                    // 0個→変更なし、1〜6個→薄い黄、7個全部→薄い青
+                    let dayBgClass = 'hover:bg-slate-100';
+                    if (!isSelected) {
+                      if (totalChecks >= 7) dayBgClass = 'bg-blue-100 hover:bg-blue-200';
+                      else if (totalChecks >= 1) dayBgClass = 'bg-yellow-100 hover:bg-yellow-200';
+                    }
+
                     return (
                       <button 
                         key={idx}
@@ -2460,7 +2537,7 @@ const HomeView = ({ onStart, statsData, historyData, onReview, onExportText, onI
                           setSelectedDate(new Date(year, month, day.number));
                           setShowHistoryModal(true);
                         }}
-                        className={`p-1 sm:p-2 rounded-xl flex flex-col items-center justify-center gap-1 transition-colors ${isSelected ? 'bg-blue-600 text-white font-bold shadow-md' : 'text-slate-700 hover:bg-slate-100'}`}
+                        className={`p-1 sm:p-2 rounded-xl flex flex-col items-center justify-center gap-1 transition-colors ${isSelected ? 'bg-blue-600 text-white font-bold shadow-md' : `text-slate-700 ${dayBgClass}`}`}
                       >
                         <span>{day.number}</span>
                         <div className="h-1 flex gap-0.5">
@@ -2685,10 +2762,29 @@ function TodayStudyHome({ dailyChecks, todayModal, setTodayModal, onStart, stats
     { label: 'Lv.3', mode: 'sentence_lvl3', grade: '中3レベル', total: SENTENCES_LEVEL3.length },
   ].map((c) => ({ ...c, remaining: Math.max(0, c.total - solvedCount(c.mode)) }));
 
+  const [outputStage, setOutputStage] = useState(null); // null | 'speaking' | 'writing'
+  useEffect(() => {
+    if (todayModal !== 'output') setOutputStage(null);
+  }, [todayModal]);
+
   const outputChoices = [
     { label: 'リスニング（聞き取り）', mode: 'listening', done: outputDoneList.includes('listening') },
-    { label: 'スピーキング（音読）', mode: 'speaking', done: outputDoneList.includes('speaking') },
-    { label: 'ライティング（書き取り）', mode: 'writing', done: outputDoneList.includes('writing') },
+    { label: 'スピーキング（音読）', mode: '__speaking', done: outputDoneList.includes('speaking') },
+    { label: 'ライティング（書き取り）', mode: '__writing', done: outputDoneList.includes('writing') },
+  ];
+
+  const speakingChoices = [
+    { label: '基本', mode: 'speaking_basic', grade: '中1レベル', total: SENTENCES_BASIC.length, remaining: SENTENCES_BASIC.length },
+    { label: 'Lv.1', mode: 'speaking_lvl1', grade: '中1後半〜中2前半', total: SENTENCES_LEVEL1.length, remaining: SENTENCES_LEVEL1.length },
+    { label: 'Lv.2', mode: 'speaking_lvl2', grade: '中2レベル', total: SENTENCES_LEVEL2.length, remaining: SENTENCES_LEVEL2.length },
+    { label: 'Lv.3', mode: 'speaking_lvl3', grade: '中3レベル', total: SENTENCES_LEVEL3.length, remaining: SENTENCES_LEVEL3.length },
+  ];
+
+  const writingChoices = [
+    { label: '基本', mode: 'writing_basic', grade: '中1レベル', total: SENTENCES_BASIC.length, remaining: SENTENCES_BASIC.length },
+    { label: 'Lv.1', mode: 'writing_lvl1', grade: '中1後半〜中2前半', total: SENTENCES_LEVEL1.length, remaining: SENTENCES_LEVEL1.length },
+    { label: 'Lv.2', mode: 'writing_lvl2', grade: '中2レベル', total: SENTENCES_LEVEL2.length, remaining: SENTENCES_LEVEL2.length },
+    { label: 'Lv.3', mode: 'writing_lvl3', grade: '中3レベル', total: SENTENCES_LEVEL3.length, remaining: SENTENCES_LEVEL3.length },
   ];
 
   return (
@@ -2726,15 +2822,41 @@ function TodayStudyHome({ dailyChecks, todayModal, setTodayModal, onStart, stats
           onClose={() => setTodayModal(null)}
         />
       )}
-      {todayModal === 'output' && (
+      {todayModal === 'output' && outputStage === null && (
         <TodayChoiceModal
           title="どの種類にしますか？"
           subtitle="アウトプット特訓"
           message="一日に3種類すべてを解きましょう（80点以上でチェック）"
           variant="output"
           choices={outputChoices}
-          onPick={(m) => { setTodayModal(null); onStart(m); }}
+          onPick={(m) => {
+            if (m === '__speaking') setOutputStage('speaking');
+            else if (m === '__writing') setOutputStage('writing');
+            else { setTodayModal(null); onStart(m); }
+          }}
           onClose={() => setTodayModal(null)}
+        />
+      )}
+      {todayModal === 'output' && outputStage === 'speaking' && (
+        <TodayChoiceModal
+          title="どの難易度にしますか？"
+          subtitle="スピーキング（音読）"
+          message="同じレベルなら短文和訳・ライティングと同じ問題から出題"
+          variant="level"
+          choices={speakingChoices}
+          onPick={(m) => { setTodayModal(null); setOutputStage(null); onStart(m); }}
+          onClose={() => setOutputStage(null)}
+        />
+      )}
+      {todayModal === 'output' && outputStage === 'writing' && (
+        <TodayChoiceModal
+          title="どの難易度にしますか？"
+          subtitle="ライティング（書き取り）"
+          message="同じレベルなら短文和訳・スピーキングと同じ問題から出題"
+          variant="level"
+          choices={writingChoices}
+          onPick={(m) => { setTodayModal(null); setOutputStage(null); onStart(m); }}
+          onClose={() => setOutputStage(null)}
         />
       )}
     </div>
@@ -2958,6 +3080,7 @@ export default function App() {
     testResultsRef.current = []; 
     
     let targetData = [];
+    let listeningIsDayFixed = false;
     if (mode === 'word_basic') targetData = WORDS_BASIC;
     else if (mode === 'word_lvl1') targetData = WORDS_LEVEL1;
     else if (mode === 'word_lvl2') targetData = WORDS_LEVEL2;
@@ -2969,18 +3092,55 @@ export default function App() {
     else if (mode === 'sentence_lvl3') targetData = SENTENCES_LEVEL3;
     else if (mode === 'sentence_lvl4') targetData = SENTENCES_LEVEL4;
     else if (mode === 'sentence_lvl5') targetData = SENTENCES_LEVEL5;
-    else if (mode === 'listening') targetData = [...WORDS_BASIC, ...WORDS_LEVEL1];
-    else if (mode === 'speaking') targetData = [...SENTENCES_BASIC, ...SENTENCES_LEVEL1, ...SENTENCES_LEVEL2, ...SENTENCES_LEVEL3];
-    else if (mode === 'writing') targetData = SENTENCES_LEVEL1;
+    // 案 Y: スピーキング・ライティングもレベルごとに短文和訳と同じ SENTENCES_LEVEL{N} を使う
+    else if (mode === 'writing_basic' || mode === 'speaking_basic') targetData = SENTENCES_BASIC;
+    else if (mode === 'writing_lvl1' || mode === 'speaking_lvl1') targetData = SENTENCES_LEVEL1;
+    else if (mode === 'writing_lvl2' || mode === 'speaking_lvl2') targetData = SENTENCES_LEVEL2;
+    else if (mode === 'writing_lvl3' || mode === 'speaking_lvl3') targetData = SENTENCES_LEVEL3;
+    else if (mode === 'writing' || mode === 'speaking') targetData = SENTENCES_LEVEL1; // 旧モード後方互換
+    else if (mode === 'listening') {
+      // 今日の一問一答 (word_*) で出題された単語のみから、日付固定の10問を選ぶ
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const seen = new Set();
+      historyData.forEach(r => {
+        if (!r || typeof r.mode !== 'string' || !r.mode.startsWith('word_')) return;
+        const d = new Date(r.date);
+        const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        if (dStr !== todayStr) return;
+        if (Array.isArray(r.results)) {
+          r.results.forEach(item => { if (item && item.en) seen.add(item.en); });
+        }
+      });
+      const filtered = ALL_WORDS.filter(w => seen.has(w.en));
+      // 今日の学習が無い場合はクラッシュ回避のため、デフォルトプールへフォールバック
+      const pool = filtered.length > 0 ? filtered : [...WORDS_BASIC, ...WORDS_LEVEL1];
+      const seed = parseInt(todayStr.replace(/-/g, ''), 10) || 0;
+      const hashKey = (s) => {
+        let h = seed;
+        for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+        return h;
+      };
+      targetData = pool
+        .map(w => ({ w, k: hashKey(w.en) }))
+        .sort((a, b) => a.k - b.k)
+        .slice(0, 10)
+        .map(x => x.w);
+      listeningIsDayFixed = true;
+    }
     
     const count = mode.includes('word') || mode === 'listening' ? 10 : 5;
-    setQuestions(shuffle(targetData).slice(0, count));
+    const picked = listeningIsDayFixed ? targetData : shuffle(targetData).slice(0, count);
+    setQuestions(picked);
 
     // viewの決定
     let nextView = '';
     if (mode.includes('word')) nextView = 'word';
     else if (mode.includes('sentence')) nextView = 'sentence';
-    else nextView = mode; // listening, writing, speaking
+    else if (mode.startsWith('writing')) nextView = 'writing';
+    else if (mode.startsWith('speaking')) nextView = 'speaking';
+    else if (mode === 'listening') nextView = 'listening';
+    else nextView = mode;
     
     setCurrentView(nextView);
   };
@@ -2988,11 +3148,11 @@ export default function App() {
   const startReviewTest = (reviewItems, type) => {
     const targetQuestions = shuffle([...reviewItems]).slice(0, 10).map(item => ({ en: item.en, ja: item.ja }));
     setQuestions(targetQuestions);
-    setTestMode(type === 'word' ? 'review_word' : 'review_sentence');
+    setTestMode(type === 'word' ? 'review_word' : type === 'writing' ? 'review_writing' : 'review_sentence');
     setCurrentIndex(0);
     setScore(0);
     testResultsRef.current = [];
-    setCurrentView(type === 'word' ? 'word' : 'sentence'); 
+    setCurrentView(type === 'word' ? 'word' : type === 'writing' ? 'writing' : 'sentence'); 
   };
 
   const handleAnswer = (isCorrect) => {
@@ -3002,10 +3162,12 @@ export default function App() {
   };
 
   const finishTest = async () => {
-    if (user && db && testResultsRef.current.length > 0) {
+    const isOutputMode = testMode === 'listening' || (typeof testMode === 'string' && (testMode.startsWith('writing') || testMode.startsWith('speaking'))) && testMode !== 'review_writing';
+    const hasResults = testResultsRef.current.length > 0;
+    if (user && db && (hasResults || (isOutputMode && questions.length > 0))) {
       try {
-        const finalScore = testResultsRef.current.filter(r => r.isCorrect).length;
-        const total = testResultsRef.current.length;
+        const finalScore = hasResults ? testResultsRef.current.filter(r => r.isCorrect).length : score;
+        const total = hasResults ? testResultsRef.current.length : questions.length;
         
         const historyRef = collection(db, 'artifacts', appId, 'users', user.uid, 'history');
         await addDoc(historyRef, {
@@ -3013,8 +3175,10 @@ export default function App() {
           mode: testMode,
           score: finalScore,
           total: total,
-          accuracy: Math.round((finalScore / total) * 100),
-          results: testResultsRef.current.map(r => ({ en: r.item.en, ja: r.item.ja, isCorrect: r.isCorrect }))
+          accuracy: total > 0 ? Math.round((finalScore / total) * 100) : 0,
+          results: hasResults
+            ? testResultsRef.current.map(r => ({ en: r.item.en, ja: r.item.ja, isCorrect: r.isCorrect }))
+            : questions.map((q, i) => ({ en: q.en, ja: q.ja, isCorrect: i < finalScore }))
         });
 
         const promises = testResultsRef.current.map(async (res) => {
@@ -3022,19 +3186,25 @@ export default function App() {
           const statRef = doc(db, 'artifacts', appId, 'users', user.uid, 'items_stats', safeId);
           
           const snap = await getDoc(statRef);
-          let data = snap.exists() ? snap.data() : { en: res.item.en, ja: res.item.ja, correctCount: 0, wrongCount: 0, type: res.type, reviewCorrectCount: 0, needsReview: false };
+          let data = snap.exists() ? snap.data() : { en: res.item.en, ja: res.item.ja, correctCount: 0, wrongCount: 0, type: res.type, reviewCorrectCount: 0, needsReview: false, needsWritingReview: false };
           
           if (data.reviewCorrectCount === undefined) data.reviewCorrectCount = 0;
           if (data.needsReview === undefined) data.needsReview = data.wrongCount > 0;
+          if (data.needsWritingReview === undefined) data.needsWritingReview = data.wrongCount > 0 && data.type === 'sentence';
           
           if (res.isCorrect) {
             data.correctCount += 1;
             data.reviewCorrectCount += 1;
-            if (data.reviewCorrectCount >= 3) data.needsReview = false;
+            if (data.reviewCorrectCount >= 1) data.needsReview = false;
+            // ライティング復習フラグは writing / review_writing モードでの正解時のみクリア
+            if (testMode === 'writing' || testMode === 'review_writing') {
+              data.needsWritingReview = false;
+            }
           } else {
             data.wrongCount += 1;
             data.reviewCorrectCount = 0; 
             data.needsReview = true; 
+            if (data.type === 'sentence') data.needsWritingReview = true;
           }
           data.lastResult = res.isCorrect;
           
@@ -3052,9 +3222,15 @@ export default function App() {
         checks.vocab = Math.min(2, (checks.vocab || 0) + 1);
       } else if (testMode.startsWith('sentence_')) {
         checks.sentence = Math.min(2, (checks.sentence || 0) + 1);
-      } else if (testMode === 'listening' || testMode === 'writing' || testMode === 'speaking') {
-        if (!Array.isArray(checks.outputs)) checks.outputs = [];
-        if (!checks.outputs.includes(testMode)) checks.outputs.push(testMode);
+      } else {
+        let outputKey = null;
+        if (testMode === 'listening') outputKey = 'listening';
+        else if (typeof testMode === 'string' && testMode.startsWith('writing') && testMode !== 'review_writing') outputKey = 'writing';
+        else if (typeof testMode === 'string' && testMode.startsWith('speaking')) outputKey = 'speaking';
+        if (outputKey) {
+          if (!Array.isArray(checks.outputs)) checks.outputs = [];
+          if (!checks.outputs.includes(outputKey)) checks.outputs.push(outputKey);
+        }
       }
       safeSetItem(DAILY_KEY, JSON.stringify(checks));
       setDailyChecks(checks);
