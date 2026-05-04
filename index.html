@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>英単語テスト</title>
 
+  <!-- ブックマーク用アイコン（怒涛の勢いバッジと同じ⚡） -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%23fde68a'/><stop offset='1' stop-color='%23f59e0b'/></linearGradient></defs><rect width='100' height='100' rx='22' fill='url(%23g)'/><text x='50' y='78' text-anchor='middle' font-size='78' font-family='Apple Color Emoji,Segoe UI Emoji,Noto Color Emoji,sans-serif'>⚡</text></svg>" />
+  <link rel="apple-touch-icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%23fde68a'/><stop offset='1' stop-color='%23f59e0b'/></linearGradient></defs><rect width='100' height='100' rx='22' fill='url(%23g)'/><text x='50' y='78' text-anchor='middle' font-size='78' font-family='Apple Color Emoji,Segoe UI Emoji,Noto Color Emoji,sans-serif'>⚡</text></svg>" />
+
   <!-- Tailwind CSS（CDN） -->
   <script src="https://cdn.tailwindcss.com"></script>
 
@@ -359,6 +363,1175 @@
       setTimeout(injectMicOffButton, 1000);
       setTimeout(injectMicOffButton, 3000);
     })();
+  </script>
+
+  <!-- 称号・バッヂシステム（案1：武道系 / 独立ウィジェット） -->
+  <script>
+  (function () {
+    'use strict';
+    var STORAGE_PREFIX = 'english-quiz:';
+    var RANKS = [
+      { lv: 1,  name: '英語見習い',       threshold: 0,    icon: '🥋', color: '#9ca3af', desc: '修行はここから' },
+      { lv: 2,  name: '単語の使い手',     threshold: 10,   icon: '🗡️', color: '#60a5fa', desc: '基本の構えを習得' },
+      { lv: 3,  name: '単語剣士',         threshold: 50,   icon: '⚔️', color: '#2563eb', desc: '戦える単語数に到達' },
+      { lv: 4,  name: '文法の達人',       threshold: 150,  icon: '📜', color: '#10b981', desc: '型を極めた者' },
+      { lv: 5,  name: 'リスニングの巫女', threshold: 300,  icon: '🎐', color: '#a855f7', desc: '音を聞き分ける耳' },
+      { lv: 6,  name: '英語武芸者',       threshold: 500,  icon: '🥷', color: '#7c3aed', desc: '実戦の達人' },
+      { lv: 7,  name: '言語の賢者',       threshold: 1000, icon: '🧙', color: '#f59e0b', desc: '英語の理を解く' },
+      { lv: 8,  name: '辞書喰らい',       threshold: 1500, icon: '📚', color: '#ef4444', desc: '辞書一冊を平らげた' },
+      { lv: 9,  name: '言霊使い',         threshold: 2000, icon: '✨', color: '#ec4899', desc: '言葉に魂を宿す' },
+      { lv: 10, name: '英語仙人',         threshold: 3000, icon: '🐉', color: '#dc2626', desc: '英語の頂にて' }
+    ];
+    window.__ENGLISH_QUIZ_RANKS = RANKS;
+
+    function safeParse(raw) { try { return JSON.parse(raw); } catch (e) { return null; } }
+
+    // localStorage の履歴データから累計正解数を集計（スキーマに柔軟対応）
+    function countCorrect() {
+      var count = 0;
+      var len = 0;
+      try { len = localStorage.length; } catch (e) { return 0; }
+      for (var i = 0; i < len; i++) {
+        var key = null;
+        try { key = localStorage.key(i); } catch (e) { continue; }
+        if (!key || key.indexOf(STORAGE_PREFIX) !== 0) continue;
+        if (!/(\/history\/|\/results\/|\/sessions\/|\/answers\/|\/log\/|\/quiz\/)/.test(key)) continue;
+        var raw = null;
+        try { raw = localStorage.getItem(key); } catch (e) { continue; }
+        if (!raw) continue;
+        var data = safeParse(raw);
+        if (!data || typeof data !== 'object') continue;
+        if (data.correct === true || data.isCorrect === true || data.is_correct === true) {
+          count++;
+        } else if (typeof data.correctCount === 'number') {
+          count += data.correctCount;
+        } else if (typeof data.numCorrect === 'number') {
+          count += data.numCorrect;
+        } else if (typeof data.score === 'number' && typeof data.total === 'number') {
+          count += data.score;
+        } else if (Array.isArray(data.results)) {
+          data.results.forEach(function (r) { if (r && (r.correct === true || r.isCorrect === true)) count++; });
+        } else if (Array.isArray(data.answers)) {
+          data.answers.forEach(function (r) { if (r && (r.correct === true || r.isCorrect === true)) count++; });
+        }
+      }
+      try {
+        var manual = parseInt(localStorage.getItem(STORAGE_PREFIX + '__rank_manual_correct') || '0', 10);
+        if (!isNaN(manual)) count += manual;
+      } catch (e) {}
+      return count;
+    }
+    window.__getEnglishQuizCorrectCount = countCorrect;
+
+    function getRankInfo(n) {
+      var cur = RANKS[0], next = null;
+      for (var i = 0; i < RANKS.length; i++) {
+        if (n >= RANKS[i].threshold) cur = RANKS[i];
+        else { next = RANKS[i]; break; }
+      }
+      return { current: cur, next: next, total: n };
+    }
+    window.__getEnglishQuizRankInfo = getRankInfo;
+
+    var lastShownLv = null;
+    function showRankUpToast(rank) {
+      if (typeof document === 'undefined' || !document.body) return;
+      var t = document.createElement('div');
+      t.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.9);z-index:2147483647;background:linear-gradient(135deg,' + rank.color + ',#0f172a);color:#fff;padding:24px 32px;border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,0.45);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;text-align:center;opacity:0;transition:opacity .35s ease, transform .35s ease;min-width:240px;max-width:90vw;';
+      t.innerHTML = '<div style="font-size:13px;opacity:0.85;margin-bottom:6px;letter-spacing:0.1em;">🎉 ランクアップ!</div>'
+                  + '<div style="font-size:54px;line-height:1;margin-bottom:10px;">' + rank.icon + '</div>'
+                  + '<div style="font-size:22px;font-weight:800;letter-spacing:0.04em;">' + rank.name + '</div>'
+                  + '<div style="font-size:12px;opacity:0.85;margin-top:8px;">Lv.' + rank.lv + ' ／ ' + rank.desc + '</div>';
+      document.body.appendChild(t);
+      requestAnimationFrame(function () {
+        t.style.opacity = '1';
+        t.style.transform = 'translate(-50%,-50%) scale(1)';
+      });
+      setTimeout(function () {
+        t.style.opacity = '0';
+        t.style.transform = 'translate(-50%,-50%) scale(0.95)';
+        setTimeout(function () { try { t.parentNode && t.parentNode.removeChild(t); } catch (e) {} }, 450);
+      }, 2800);
+    }
+
+    // ホームメニュー「学習 / 今日の問題 / 履歴」の隣に「📜 称号」カードを挿入する
+    function setupRankMenuEntry() {
+      if (window.__rankMenuObserverInstalled) return;
+      window.__rankMenuObserverInstalled = true;
+      var KEYWORDS = ['学習', '今日の問題', '履歴'];
+
+      function buildLabel() {
+        var info = getRankInfo(countCorrect());
+        return { icon: info.current.icon, name: info.current.name, lv: info.current.lv, color: info.current.color };
+      }
+
+      function setCardText(card) {
+        var lbl = buildLabel();
+        var walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null);
+        var nodes = [];
+        while (walker.nextNode()) {
+          var n = walker.currentNode;
+          if (n.textContent && n.textContent.trim()) nodes.push(n);
+        }
+        if (nodes.length >= 2) {
+          nodes[0].textContent = lbl.icon + ' 称号';
+          nodes[1].textContent = lbl.name + ' Lv.' + lbl.lv;
+          for (var i = 2; i < nodes.length; i++) nodes[i].textContent = '';
+        } else if (nodes.length === 1) {
+          nodes[0].textContent = lbl.icon + ' 称号 ' + lbl.name;
+        } else {
+          card.appendChild(document.createTextNode(lbl.icon + ' 称号 ' + lbl.name));
+        }
+      }
+
+      function findClickableCard(el) {
+        var cur = el;
+        for (var i = 0; i < 12 && cur && cur !== document.body; i++) {
+          var tag = (cur.tagName || '').toLowerCase();
+          var role = cur.getAttribute && cur.getAttribute('role');
+          var cls = String((cur.className && cur.className.baseVal) || cur.className || '');
+          var rect = null;
+          try { rect = cur.getBoundingClientRect(); } catch (e) {}
+          var clickable = (tag === 'button' || tag === 'a' || role === 'button' ||
+                           /cursor-pointer|hover:bg|rounded-(xl|2xl|lg|md)|shadow|border|p-[3-9]|p-1[0-9]/.test(cls));
+          if (clickable && rect && rect.width >= 60 && rect.height >= 36) {
+            if (cur.parentElement && cur.parentElement.children.length >= 2) return cur;
+          }
+          cur = cur.parentElement;
+        }
+        return null;
+      }
+
+      function findMenu() {
+        var matches = [];
+        var all;
+        try { all = document.body.getElementsByTagName('*'); } catch (e) { return null; }
+        for (var i = 0; i < all.length; i++) {
+          var el = all[i];
+          if (!el) continue;
+          if (el.id && (el.id.indexOf('__badges') === 0 || el.id.indexOf('__rank') === 0)) continue;
+          var t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+          if (!t || t.length > 24) continue;
+          for (var k = 0; k < KEYWORDS.length; k++) {
+            var kw = KEYWORDS[k];
+            if (t === kw) { matches.push({ el: el, kw: kw }); break; }
+          }
+        }
+        if (matches.length < 2) return null;
+        var byKw = {};
+        matches.forEach(function (m) {
+          var prev = byKw[m.kw];
+          if (!prev) { byKw[m.kw] = m; return; }
+          var dPrev = 0, dCur = 0, p;
+          for (p = prev.el; p; p = p.parentElement) dPrev++;
+          for (p = m.el; p; p = p.parentElement) dCur++;
+          if (dCur > dPrev) byKw[m.kw] = m;
+        });
+        var keys = Object.keys(byKw);
+        if (keys.length < 2) return null;
+        var cards = keys.map(function (k) { return findClickableCard(byKw[k].el); }).filter(Boolean);
+        if (cards.length < 2) return null;
+        var counts = [];
+        cards.forEach(function (c) {
+          var p = c.parentElement;
+          if (!p) return;
+          var f = null;
+          for (var i = 0; i < counts.length; i++) if (counts[i].p === p) { f = counts[i]; break; }
+          if (f) f.n++; else counts.push({ p: p, n: 1 });
+        });
+        counts.sort(function (a, b) { return b.n - a.n; });
+        if (!counts[0] || counts[0].n < 2) return null;
+        var parent = counts[0].p;
+        var template = null;
+        for (var j = 0; j < cards.length; j++) if (cards[j].parentElement === parent) { template = cards[j]; break; }
+        return { parent: parent, template: template };
+      }
+
+      function inject() {
+        var existing = document.getElementById('__rank-menu-card');
+        if (existing && existing.isConnected && existing.parentElement) {
+          setCardText(existing);
+          var lbl0 = buildLabel();
+          try { existing.style.outline = '2px solid ' + lbl0.color; existing.style.background = '#dbeafe'; existing.style.backgroundImage = 'none'; existing.style.color = '#1e3a8a'; } catch (e) {}
+          return true;
+        }
+        var info = findMenu();
+        if (!info || !info.template) return false;
+        var card = info.template.cloneNode(true);
+        card.id = '__rank-menu-card';
+        card.setAttribute('data-rank-menu', '1');
+        try { card.onclick = null; card.removeAttribute && card.removeAttribute('href'); } catch (e) {}
+        try {
+          var nested = card.querySelectorAll('*');
+          for (var i = 0; i < nested.length; i++) {
+            try { nested[i].onclick = null; } catch (e) {}
+            try { nested[i].removeAttribute && nested[i].removeAttribute('onclick'); } catch (e) {}
+            try { nested[i].removeAttribute && nested[i].removeAttribute('href'); } catch (e) {}
+          }
+        } catch (e) {}
+        var lbl = buildLabel();
+        try { card.style.outline = '2px solid ' + lbl.color; card.style.outlineOffset = '0px'; card.style.background = '#dbeafe'; card.style.backgroundImage = 'none'; card.style.color = '#1e3a8a'; } catch (e) {}
+        setCardText(card);
+        var clickHandler = function (ev) {
+          try { ev.stopImmediatePropagation(); } catch (e) {}
+          try { ev.stopPropagation(); } catch (e) {}
+          try { ev.preventDefault(); } catch (e) {}
+          openRankPage();
+        };
+        card.addEventListener('click', clickHandler, true);
+        card.addEventListener('click', clickHandler, false);
+        card.addEventListener('touchend', clickHandler, true);
+        info.parent.appendChild(card);
+        return true;
+      }
+
+      function buildFallback() {
+        if (document.getElementById('__rank-fallback-card')) return;
+        if (!document.body) return;
+        var lbl = buildLabel();
+        var btn = document.createElement('button');
+        btn.id = '__rank-fallback-card';
+        btn.type = 'button';
+        btn.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:2147483640;background:linear-gradient(135deg,' + lbl.color + ',#111827);color:#fff;padding:10px 18px;border:none;border-radius:9999px;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,0.3);display:flex;align-items:center;gap:8px;-webkit-tap-highlight-color:transparent;';
+        btn.innerHTML = '<span style="font-size:18px;line-height:1;">' + lbl.icon + '</span><span>称号</span><span id="__rank-fallback-name" style="background:rgba(255,255,255,0.25);padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;">' + lbl.name + ' Lv.' + lbl.lv + '</span>';
+        btn.addEventListener('click', function (ev) {
+          try { ev.stopImmediatePropagation(); } catch (e) {}
+          try { ev.stopPropagation(); } catch (e) {}
+          try { ev.preventDefault(); } catch (e) {}
+          openRankPage();
+        }, true);
+        document.body.appendChild(btn);
+      }
+
+      // 「📜 称号 → 🏅 バッジ」の順で並べるようメニューカードの順序を強制
+      function enforceOrder() {
+        var rank = document.getElementById('__rank-menu-card');
+        var badges = document.getElementById('__badges-menu-card');
+        if (!rank || !badges || rank.parentElement !== badges.parentElement) return;
+        var p = rank.parentElement;
+        if (rank.nextElementSibling === badges && badges.nextElementSibling === null) return;
+        try { p.appendChild(rank); p.appendChild(badges); } catch (e) {}
+      }
+
+      function tick() {
+        try {
+          var ok = inject();
+          if (ok) {
+            var fb = document.getElementById('__rank-fallback-card');
+            if (fb && fb.parentNode) try { fb.parentNode.removeChild(fb); } catch (e) {}
+          }
+          enforceOrder();
+        } catch (e) {}
+      }
+
+      tick();
+      setTimeout(tick, 400);
+      setTimeout(tick, 1200);
+      setTimeout(tick, 2500);
+      setTimeout(function () {
+        if (!document.getElementById('__rank-menu-card')) buildFallback();
+      }, 5000);
+      setInterval(tick, 1500);
+      try {
+        var obs = new MutationObserver(function () { tick(); });
+        obs.observe(document.body, { childList: true, subtree: true });
+        window.__rankMenuObserver = obs;
+      } catch (e) {}
+    }
+
+    // 独立ページ風の称号一覧フルスクリーンUI
+    function openRankPage() {
+      if (document.getElementById('__rank-overlay')) return;
+      var total = countCorrect();
+      var info = getRankInfo(total);
+      var ov = document.createElement('div');
+      ov.id = '__rank-overlay';
+      ov.style.cssText = 'position:fixed;inset:0;background:#f9fafb;z-index:2147483646;display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;overflow:hidden;';
+
+      var header = document.createElement('div');
+      header.style.cssText = 'flex:0 0 auto;background:linear-gradient(135deg,' + info.current.color + ',#1e293b);color:#fff;padding:max(14px, env(safe-area-inset-top, 14px)) 16px 14px;display:flex;align-items:center;gap:10px;box-shadow:0 2px 8px rgba(0,0,0,0.18);position:sticky;top:0;z-index:2;';
+      header.innerHTML = ''
+        + '<button type="button" id="__rank-back" aria-label="戻る" style="border:none;background:#fff;color:#111827;padding:8px 14px 8px 10px;border-radius:9999px;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;gap:4px;flex-shrink:0;line-height:1;box-shadow:0 2px 6px rgba(0,0,0,0.18);-webkit-tap-highlight-color:transparent;">'
+        +   '<span style="font-size:18px;line-height:1;">←</span><span>戻る</span>'
+        + '</button>'
+        + '<div style="flex:1;min-width:0;">'
+        +   '<div style="font-weight:800;font-size:16px;line-height:1.2;">📜 称号</div>'
+        +   '<div style="font-size:11.5px;color:rgba(255,255,255,0.85);margin-top:2px;">累計正解 <strong>' + total + '</strong> 問</div>'
+        + '</div>'
+        + '<button type="button" id="__rank-close-x" aria-label="閉じる" style="border:none;background:rgba(255,255,255,0.25);width:36px;height:36px;border-radius:9999px;font-size:20px;cursor:pointer;color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;line-height:1;-webkit-tap-highlight-color:transparent;">×</button>';
+
+      var listWrap = document.createElement('div');
+      listWrap.style.cssText = 'flex:1 1 auto;overflow-y:auto;padding:16px 14px 90px;-webkit-overflow-scrolling:touch;';
+      var inner = document.createElement('div');
+      inner.style.cssText = 'max-width:540px;margin:0 auto;';
+
+      // 現在の称号カード
+      var curCard = document.createElement('div');
+      curCard.style.cssText = 'background:linear-gradient(135deg,' + info.current.color + ',#0f172a);color:#fff;border-radius:18px;padding:20px;margin-bottom:16px;box-shadow:0 12px 28px rgba(0,0,0,0.18);';
+      var pct = 0;
+      var progressLabel = '👑 最高位「英語仙人」に到達！';
+      if (info.next) {
+        var span = info.next.threshold - info.current.threshold;
+        var have = Math.max(0, total - info.current.threshold);
+        pct = span > 0 ? Math.min(100, Math.round(have / span * 100)) : 0;
+        progressLabel = '次：' + info.next.icon + ' ' + info.next.name + ' まで あと ' + Math.max(0, info.next.threshold - total) + ' 問';
+      } else { pct = 100; }
+      curCard.innerHTML = '<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">'
+                       +   '<div style="font-size:54px;line-height:1;">' + info.current.icon + '</div>'
+                       +   '<div style="flex:1;min-width:0;">'
+                       +     '<div style="font-size:11px;opacity:0.8;letter-spacing:0.1em;">CURRENT RANK</div>'
+                       +     '<div style="font-weight:800;font-size:22px;letter-spacing:0.04em;">' + info.current.name + '</div>'
+                       +     '<div style="font-size:12px;opacity:0.85;margin-top:2px;">Lv.' + info.current.lv + ' ／ ' + info.current.desc + '</div>'
+                       +   '</div>'
+                       + '</div>'
+                       + '<div style="height:10px;background:rgba(255,255,255,0.18);border-radius:9999px;overflow:hidden;margin-bottom:6px;">'
+                       +   '<div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,#fbbf24,#f97316);transition:width .5s ease;"></div>'
+                       + '</div>'
+                       + '<div style="font-size:12px;opacity:0.92;">' + progressLabel + '</div>';
+      inner.appendChild(curCard);
+
+      // 称号一覧
+      var listTitle = document.createElement('div');
+      listTitle.style.cssText = 'font-size:11px;font-weight:700;color:#9ca3af;margin:18px 4px 8px;letter-spacing:0.12em;';
+      listTitle.textContent = '— 称号一覧 —';
+      inner.appendChild(listTitle);
+
+      RANKS.forEach(function (r) {
+        var reached = total >= r.threshold;
+        var isCurrent = r.lv === info.current.lv;
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:12px;background:' + (isCurrent ? '#fff' : '#fff') + ';border:' + (isCurrent ? '2px solid ' + r.color : '1px solid #e5e7eb') + ';margin-bottom:6px;' + (reached ? '' : 'opacity:0.5;');
+        row.innerHTML = '<div style="font-size:30px;line-height:1;width:42px;text-align:center;flex-shrink:0;' + (reached ? '' : 'filter:grayscale(1);') + '">' + r.icon + '</div>'
+                      + '<div style="flex:1;min-width:0;">'
+                      +   '<div style="font-weight:800;font-size:14px;color:#111827;">' + r.name + (isCurrent ? ' <span style="background:' + r.color + ';color:#fff;font-size:10px;padding:1px 8px;border-radius:9999px;font-weight:700;margin-left:4px;vertical-align:middle;">現在</span>' : '') + '</div>'
+                      +   '<div style="font-size:11.5px;color:#6b7280;margin-top:2px;">Lv.' + r.lv + ' ／ ' + r.desc + '</div>'
+                      + '</div>'
+                      + '<div style="font-size:11px;color:#9ca3af;font-weight:600;flex-shrink:0;">' + r.threshold + '問〜</div>';
+        inner.appendChild(row);
+      });
+
+      listWrap.appendChild(inner);
+
+      var bottomBar = document.createElement('div');
+      bottomBar.style.cssText = 'position:absolute;left:0;right:0;bottom:0;padding:10px 16px calc(14px + env(safe-area-inset-bottom, 0px));background:linear-gradient(to top, rgba(249,250,251,0.98) 60%, rgba(249,250,251,0));display:flex;justify-content:center;pointer-events:none;';
+      var bottomBtn = document.createElement('button');
+      bottomBtn.type = 'button';
+      bottomBtn.id = '__rank-close-bottom';
+      bottomBtn.textContent = '← メニューに戻る';
+      bottomBtn.style.cssText = 'pointer-events:auto;border:none;background:linear-gradient(135deg,' + info.current.color + ',#1e293b);color:#fff;padding:12px 28px;border-radius:9999px;font-size:14px;font-weight:800;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,0.25);-webkit-tap-highlight-color:transparent;font-family:inherit;';
+      bottomBar.appendChild(bottomBtn);
+
+      ov.appendChild(header);
+      ov.appendChild(listWrap);
+      ov.appendChild(bottomBar);
+      document.body.appendChild(ov);
+
+      function closeRankPage() {
+        try { ov.parentNode && ov.parentNode.removeChild(ov); } catch (e) {}
+        document.removeEventListener('keydown', keyHandler);
+      }
+      var keyHandler = function (ev) { if (ev.key === 'Escape') { ev.preventDefault(); closeRankPage(); } };
+      var stopAndClose = function (ev) {
+        try { ev.stopImmediatePropagation(); } catch (e) {}
+        try { ev.stopPropagation(); } catch (e) {}
+        try { ev.preventDefault(); } catch (e) {}
+        closeRankPage();
+      };
+      var backBtn = header.querySelector('#__rank-back');
+      var closeXBtn = header.querySelector('#__rank-close-x');
+      if (backBtn) {
+        backBtn.addEventListener('click', stopAndClose, true);
+        backBtn.addEventListener('touchend', stopAndClose, true);
+      }
+      if (closeXBtn) {
+        closeXBtn.addEventListener('click', stopAndClose, true);
+        closeXBtn.addEventListener('touchend', stopAndClose, true);
+      }
+      bottomBtn.addEventListener('click', stopAndClose, true);
+      bottomBtn.addEventListener('touchend', stopAndClose, true);
+      document.addEventListener('keydown', keyHandler);
+    }
+
+    function updateBadge() {
+      // 現在の称号を計算してメニューカードを更新（ランクアップトーストもここで判定）
+      var total = countCorrect();
+      var info = getRankInfo(total);
+
+      var card = document.getElementById('__rank-menu-card');
+      if (card) {
+        var walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null);
+        var nodes = [];
+        while (walker.nextNode()) {
+          var n = walker.currentNode;
+          if (n.textContent && n.textContent.trim()) nodes.push(n);
+        }
+        if (nodes.length >= 2) {
+          nodes[0].textContent = info.current.icon + ' 称号';
+          nodes[1].textContent = info.current.name + ' Lv.' + info.current.lv;
+        } else if (nodes.length === 1) {
+          nodes[0].textContent = info.current.icon + ' 称号 ' + info.current.name;
+        }
+        try { card.style.outline = '2px solid ' + info.current.color; } catch (e) {}
+      }
+
+      var fb = document.getElementById('__rank-fallback-card');
+      if (fb) {
+        var nameEl = fb.querySelector('#__rank-fallback-name');
+        if (nameEl) nameEl.textContent = info.current.name + ' Lv.' + info.current.lv;
+      }
+
+      // 古い浮遊ウィジェットが残っていたら削除
+      var oldWrap = document.getElementById('__rank-badge');
+      if (oldWrap && oldWrap.parentNode) { try { oldWrap.parentNode.removeChild(oldWrap); } catch (e) {} }
+
+      if (lastShownLv === null) {
+        lastShownLv = info.current.lv;
+      } else if (info.current.lv > lastShownLv) {
+        showRankUpToast(info.current);
+        lastShownLv = info.current.lv;
+      }
+    }
+    window.__updateRankBadge = updateBadge;
+
+    function init() {
+      setupRankMenuEntry();
+      updateBadge();
+      setInterval(updateBadge, 2000);
+      window.addEventListener('storage', function (ev) {
+        if (ev.key && ev.key.indexOf(STORAGE_PREFIX) === 0) updateBadge();
+      });
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+    setTimeout(init, 1500);
+    setTimeout(init, 3500);
+  })();
+  </script>
+
+  <!-- 条件クリア型バッジシステム（独立ウィジェット） -->
+  <script>
+  (function () {
+    'use strict';
+    var STORAGE_PREFIX = 'english-quiz:';
+    var STATE_KEY = STORAGE_PREFIX + '__badges/state_v1';
+    var STUDY_DATES_KEY = STORAGE_PREFIX + '__badges/study_dates_v1';
+
+    var BADGES = [
+      { id: 'three_day',          icon: '🥉',  name: '三日坊主からの脱却', desc: '3日連続で学習した',                 cat: '継続',     hint: 'まずは3日!' },
+      { id: 'seven_day',          icon: '🥈',  name: '習慣の鬼',           desc: '7日連続で学習した',                 cat: '継続',     hint: '一週間で習慣に' },
+      { id: 'thirty_day',         icon: '🥇',  name: '鋼の意志',           desc: '30日連続で学習した',                cat: '継続',     hint: '不屈の精神' },
+      { id: 'ten_total',          icon: '📅',  name: '十日修行',           desc: '累計10日学習した',                  cat: '継続',     hint: '10日積み上げ' },
+      { id: 'hundred_total',      icon: '🗓️', name: '半年継続',           desc: '累計100日学習した',                 cat: '継続',     hint: '100日積み上げ' },
+      { id: 'perfect_attendance', icon: '🎓',  name: '皆勤の達人',         desc: '累計365日学習した',                 cat: '継続',     hint: '1年分の積み上げ' },
+      { id: 'night_owl',          icon: '🦉',  name: '夜更かしフクロウ',   desc: '夜22時以降に学習を完了した',        cat: '時間帯',   hint: '夜の学習1回でOK' },
+      { id: 'early_bird',         icon: '🐓',  name: '早起きの鳥',         desc: '朝5時〜7時の間に学習を完了した',    cat: '時間帯',   hint: '早朝の学習1回でOK' },
+      { id: 'morning_master',     icon: '🌅',  name: '朝活マスター',       desc: '朝7時前の学習を累計30日達成',       cat: '時間帯',   hint: '早朝学習の積み重ね' },
+      { id: 'moonlight',          icon: '🌙',  name: '月光浴',             desc: '22時以降の学習を累計10日達成',      cat: '時間帯',   hint: '夜学習の累計' },
+      { id: 'weekend_warrior',    icon: '🗓️', name: '週末戦士',           desc: '土日のいずれかに学習を4週連続',     cat: '時間帯',   hint: '週末も忘れずに' },
+      { id: 'clock_master',       icon: '🕐',  name: '時計マスター',       desc: '朝・昼・夕・夜・深夜の5時間帯すべてで学習', cat: '時間帯', hint: '5時間帯コンプ' },
+      { id: 'weekday_master',     icon: '📆',  name: '七曜制覇',           desc: '月〜日の全曜日で学習',              cat: '時間帯',   hint: '7曜日コンプ' },
+      { id: 'hour_master',        icon: '🌏',  name: '24時間バトラー',     desc: '0時〜23時すべての時間で学習',       cat: '時間帯',   hint: '24時間コンプ' },
+      { id: 'daily_50',           icon: '💪',  name: 'デイリー50',         desc: '1日に50問正解した',                 cat: 'ボリューム', hint: '一日にまとまった量を' },
+      { id: 'daily_100',          icon: '🔥',  name: 'デイリー100',        desc: '1日に100問正解した',                cat: 'ボリューム', hint: '一日に集中して' },
+      { id: 'daily_200',          icon: '⚡',  name: '怒涛の勢い',         desc: '1日に200問正解した',                cat: 'ボリューム', hint: '怒涛の勢いで' },
+      { id: 'no_sleep',           icon: '🌃',  name: '不眠不休',           desc: '同日内で4時間以上にわたり学習',     cat: 'ボリューム', hint: '朝〜夜で学習' },
+      { id: 'bullseye',           icon: '🎯',  name: '百発百中',           desc: '10問連続で正解した',                cat: '精度',     hint: 'ノーミスで10連続' },
+      { id: 'shotoku',            icon: '👂',  name: '聖徳太子',           desc: 'リスニング系で累計100問正解',       cat: '特化',     hint: '耳を鍛えよ' },
+      { id: 'native_egg',         icon: '🗣️', name: 'ネイティブの卵',     desc: 'スピーキング系で累計100問正解',     cat: '特化',     hint: '声に出して' },
+      { id: 'bungo',              icon: '✍️', name: '文豪',               desc: 'ライティング系で累計100問正解',     cat: '特化',     hint: '書いて覚える' },
+      { id: 'all_rounder',        icon: '🏅',  name: 'オールラウンダー',   desc: '3モード各々で累計50問正解',         cat: '特化',     hint: '満遍なく学習' },
+      { id: 'multi_lingual',      icon: '🌐',  name: 'マルチリンガル予備軍', desc: '3モード各々で累計500問正解',       cat: '特化',     hint: '全モード500問ずつ' },
+      { id: 'rank_up',            icon: '⬆️', name: '昇格',               desc: 'ランクが1段階上がった',             cat: 'ランク',   hint: '称号アップで自動解放' },
+      { id: 'peak_path',          icon: '🏆',  name: '頂への道',           desc: 'ランク5（中級）に到達',             cat: 'ランク',   hint: 'ランク5を目指せ' },
+      { id: 'eigo_sennin',        icon: '🐉',  name: '英語仙人',           desc: '最上位ランクに到達',                cat: 'ランク',   hint: '頂を目指せ' },
+      { id: 'new_year_day',       icon: '🎍',  name: '元旦の決意',         desc: '1月1日に学習',                      cat: '行事',     hint: '1月1日にログイン' },
+      { id: 'gw_warrior',         icon: '🎏',  name: 'GW勇者',             desc: 'GW期間中に5日学習',                 cat: '行事',     hint: 'GW期間に5日学習' },
+      { id: 'tanabata',           icon: '🎋',  name: '七夕の願い',         desc: '7月7日に学習',                      cat: '行事',     hint: '7月7日にログイン' },
+      { id: 'summer_warrior',     icon: '☀️', name: '夏休み戦士',         desc: '8月に20日学習',                     cat: '行事',     hint: '8月の継続学習' },
+      { id: 'halloween',          icon: '🎃',  name: 'トリックオアトリート', desc: '10月31日に学習',                  cat: '行事',     hint: '10月31日にログイン' },
+      { id: 'christmas',          icon: '🎄',  name: 'クリスマス学習',     desc: '12月25日に学習',                    cat: '行事',     hint: '12月25日にログイン' }
+    ];
+
+    function safeParse(raw, fb) { try { return JSON.parse(raw); } catch (e) { return fb; } }
+    function loadState() {
+      var raw = null;
+      try { raw = localStorage.getItem(STATE_KEY); } catch (e) {}
+      var s = safeParse(raw, {}) || {};
+      if (!s.unlocked) s.unlocked = {};
+      if (!s.counters) s.counters = {};
+      if (s.lastCorrect == null) s.lastCorrect = -1;
+      if (s.maxStreak == null) s.maxStreak = 0;
+      return s;
+    }
+    function saveState(s) { try { localStorage.setItem(STATE_KEY, JSON.stringify(s)); } catch (e) {} }
+    function loadStudyDates() {
+      var raw = null;
+      try { raw = localStorage.getItem(STUDY_DATES_KEY); } catch (e) {}
+      var arr = safeParse(raw, []) || [];
+      return Array.isArray(arr) ? arr : [];
+    }
+    function saveStudyDates(arr) { try { localStorage.setItem(STUDY_DATES_KEY, JSON.stringify(arr)); } catch (e) {} }
+    function dateStr(d) {
+      d = d || new Date();
+      var y = d.getFullYear(); var m = ('0' + (d.getMonth() + 1)).slice(-2); var dd = ('0' + d.getDate()).slice(-2);
+      return y + '-' + m + '-' + dd;
+    }
+    function getCount() {
+      return (typeof window.__getEnglishQuizCorrectCount === 'function') ? window.__getEnglishQuizCorrectCount() : 0;
+    }
+
+    function inferModeIncrement(delta) {
+      var c = { listening: 0, speaking: 0, writing: 0 };
+      if (delta <= 0) return c;
+      var entries = [];
+      var len = 0;
+      try { len = localStorage.length; } catch (e) { len = 0; }
+      for (var i = 0; i < len; i++) {
+        var k = null;
+        try { k = localStorage.key(i); } catch (e) { continue; }
+        if (!k || k.indexOf(STORAGE_PREFIX) !== 0) continue;
+        if (k.indexOf(STORAGE_PREFIX + '__') === 0) continue;
+        if (!/(history|results|sessions|answers|log|quiz)/i.test(k)) continue;
+        var raw = null;
+        try { raw = localStorage.getItem(k); } catch (e) { continue; }
+        var d = safeParse(raw, null);
+        if (!d) continue;
+        var ts = d.timestamp || d.createdAt || d.updatedAt || d.time || d.date || 0;
+        if (typeof ts === 'string') ts = Date.parse(ts) || 0;
+        entries.push({ key: k, data: d, ts: ts });
+      }
+      entries.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+      var pickup = 0;
+      for (var j = 0; j < entries.length && pickup < delta; j++) {
+        var t = entries[j];
+        var dd2 = t.data;
+        var ok = dd2 && (dd2.correct === true || dd2.isCorrect === true || dd2.is_correct === true);
+        if (!ok) continue;
+        var blob = (t.key + ' ' + JSON.stringify(dd2 || {})).toLowerCase();
+        if (/(listen|hearing|audio|tts|sound|hear)/.test(blob)) c.listening++;
+        else if (/(speak|voice|mic|pronoun|recogn|utter)/.test(blob)) c.speaking++;
+        else if (/(writ|spell|type|input|trans|compose)/.test(blob)) c.writing++;
+        pickup++;
+      }
+      return c;
+    }
+
+    function computeMaxStreak(prevMax) {
+      var entries = [];
+      var len = 0;
+      try { len = localStorage.length; } catch (e) { len = 0; }
+      for (var i = 0; i < len; i++) {
+        var k = null;
+        try { k = localStorage.key(i); } catch (e) { continue; }
+        if (!k || k.indexOf(STORAGE_PREFIX) !== 0) continue;
+        if (k.indexOf(STORAGE_PREFIX + '__') === 0) continue;
+        if (!/(history|results|sessions|answers|log|quiz)/i.test(k)) continue;
+        var raw = null;
+        try { raw = localStorage.getItem(k); } catch (e) { continue; }
+        var d = safeParse(raw, null);
+        if (!d) continue;
+        var ts = d.timestamp || d.createdAt || d.updatedAt || d.time || d.date || 0;
+        if (typeof ts === 'string') ts = Date.parse(ts) || 0;
+        var ok = d && (d.correct === true || d.isCorrect === true || d.is_correct === true);
+        var ng = d && (d.correct === false || d.isCorrect === false || d.is_correct === false);
+        if (!ok && !ng) continue;
+        entries.push({ ts: ts, ok: !!ok });
+      }
+      entries.sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
+      var streak = 0; var max = prevMax || 0;
+      for (var j = 0; j < entries.length; j++) {
+        if (entries[j].ok) { streak++; if (streak > max) max = streak; }
+        else streak = 0;
+      }
+      return max;
+    }
+
+    function consecDays(dates) {
+      if (!dates || !dates.length) return 0;
+      var set = {}; dates.forEach(function (d) { set[d] = 1; });
+      var today = new Date();
+      var c = 0;
+      var startToday = !!set[dateStr(today)];
+      var offset = startToday ? 0 : 1;
+      for (var i = offset; i < 400; i++) {
+        var d2 = new Date(today.getTime() - i * 86400000);
+        if (set[dateStr(d2)]) c++;
+        else break;
+      }
+      return c;
+    }
+
+    function consecutiveWeekendWeeks(dates) {
+      if (!dates || !dates.length) return 0;
+      var set = {}; dates.forEach(function (d) { set[d] = 1; });
+      var today = new Date();
+      var weeks = 0;
+      for (var w = 0; w < 60; w++) {
+        var ref = new Date(today.getTime() - w * 7 * 86400000);
+        var day = ref.getDay();
+        var sat = new Date(ref); sat.setDate(ref.getDate() + (6 - day));
+        var sun = new Date(ref); sun.setDate(ref.getDate() + (7 - day));
+        var hasSat = sat <= today && set[dateStr(sat)];
+        var hasSun = sun <= today && set[dateStr(sun)];
+        if (hasSat || hasSun) {
+          weeks++;
+        } else {
+          if (sat > today && sun > today) continue;
+          break;
+        }
+      }
+      return weeks;
+    }
+
+    function recordStudyIfChanged() {
+      var s = loadState();
+      var cur = getCount();
+      if (s.lastCorrect < 0) { s.lastCorrect = cur; saveState(s); return; }
+      if (cur > s.lastCorrect) {
+        var delta = cur - s.lastCorrect;
+        var dates = loadStudyDates();
+        var today = dateStr();
+        if (dates.indexOf(today) === -1) {
+          dates.push(today);
+          if (dates.length > 800) dates = dates.slice(-800);
+          saveStudyDates(dates);
+        }
+        var hr = new Date().getHours();
+        if (hr >= 22 || hr < 5) {
+          var mk = '__moon/' + today;
+          if (!s.counters[mk]) s.counters[mk] = 1;
+        }
+        if (hr >= 5 && hr < 7) {
+          var ek = '__early/' + today;
+          if (!s.counters[ek]) s.counters[ek] = 1;
+        }
+        if (hr < 7) {
+          var amk = '__morning/' + today;
+          if (!s.counters[amk]) s.counters[amk] = 1;
+        }
+        // 新：日次正解数（デイリー50/100/200 用）
+        s.counters['__daily/' + today] = (s.counters['__daily/' + today] || 0) + delta;
+        // 新：日付内の最初／最後の正解時刻（不眠不休: 4時間スパン用）
+        var __nowMs = Date.now();
+        var __fk = '__day_first/' + today;
+        var __lk = '__day_last/' + today;
+        if (!s.counters[__fk]) s.counters[__fk] = __nowMs;
+        s.counters[__lk] = __nowMs;
+        // 新：時間バケット (24時間バトラー用)
+        s.counters['__hour/' + hr] = (s.counters['__hour/' + hr] || 0) + 1;
+        // 新：朝・昼・夕・夜・深夜（時計マスター用）
+        var __period;
+        if (hr >= 5 && hr < 11)        __period = 'morning';
+        else if (hr >= 11 && hr < 15)  __period = 'noon';
+        else if (hr >= 15 && hr < 18)  __period = 'evening';
+        else if (hr >= 18 && hr < 22)  __period = 'night';
+        else                            __period = 'midnight';
+        s.counters['__period/' + __period] = (s.counters['__period/' + __period] || 0) + 1;
+        // 新：曜日 (七曜制覇用 / 0=日 ... 6=土)
+        var __dow = new Date().getDay();
+        s.counters['__dow/' + __dow] = (s.counters['__dow/' + __dow] || 0) + 1;
+        // 新：行事フラグ
+        var __nowD = new Date();
+        var __mo = __nowD.getMonth() + 1;
+        var __da = __nowD.getDate();
+        if (__mo === 1  && __da === 1)  s.counters.__special_new_year  = 1;
+        if (__mo === 7  && __da === 7)  s.counters.__special_tanabata  = 1;
+        if (__mo === 10 && __da === 31) s.counters.__special_halloween = 1;
+        if (__mo === 12 && __da === 25) s.counters.__special_christmas = 1;
+        if ((__mo === 4 && __da >= 29) || (__mo === 5 && __da <= 5)) s.counters['__gw/'  + today] = 1;
+        if (__mo === 8) s.counters['__aug/' + today] = 1;
+        var modes = inferModeIncrement(delta);
+        if (modes.listening) s.counters.__listening_total = (s.counters.__listening_total || 0) + modes.listening;
+        if (modes.speaking)  s.counters.__speaking_total  = (s.counters.__speaking_total  || 0) + modes.speaking;
+        if (modes.writing)   s.counters.__writing_total   = (s.counters.__writing_total   || 0) + modes.writing;
+        s.lastCorrect = cur;
+        saveState(s);
+      } else if (cur < s.lastCorrect) {
+        s.lastCorrect = cur;
+        saveState(s);
+      }
+    }
+
+    function evaluate() {
+      var s = loadState();
+      var dates = loadStudyDates();
+      var consec = consecDays(dates);
+      var newMax = computeMaxStreak(s.maxStreak || 0);
+      if (newMax > (s.maxStreak || 0)) { s.maxStreak = newMax; }
+      var unlocked = s.unlocked || {};
+      var newly = [];
+      function unlock(id) {
+        if (!unlocked[id]) { unlocked[id] = { at: Date.now() }; newly.push(id); }
+      }
+
+      if (consec >= 3)  unlock('three_day');
+      if (consec >= 7)  unlock('seven_day');
+      if (consec >= 30) unlock('thirty_day');
+
+      var moonDays = Object.keys(s.counters || {}).filter(function (k) { return k.indexOf('__moon/') === 0; });
+      if (moonDays.length >= 1)  unlock('night_owl');
+      if (moonDays.length >= 10) unlock('moonlight');
+
+      var earlyDays = Object.keys(s.counters || {}).filter(function (k) { return k.indexOf('__early/') === 0; });
+      if (earlyDays.length >= 1) unlock('early_bird');
+
+      var morningDays = Object.keys(s.counters || {}).filter(function (k) { return k.indexOf('__morning/') === 0; });
+      if (morningDays.length >= 30) unlock('morning_master');
+
+      if (consecutiveWeekendWeeks(dates) >= 4) unlock('weekend_warrior');
+
+      if ((s.maxStreak || 0) >= 10) unlock('bullseye');
+
+      if (((s.counters || {}).__listening_total || 0) >= 100) unlock('shotoku');
+      if (((s.counters || {}).__speaking_total  || 0) >= 100) unlock('native_egg');
+      if (((s.counters || {}).__writing_total   || 0) >= 100) unlock('bungo');
+
+      // 累計学習日数（十日修行 / 半年継続 / 皆勤の達人）
+      if (dates.length >= 10)  unlock('ten_total');
+      if (dates.length >= 100) unlock('hundred_total');
+      if (dates.length >= 365) unlock('perfect_attendance');
+
+      // モード横断（オールラウンダー / マルチリンガル予備軍）
+      var __lt = (s.counters || {}).__listening_total || 0;
+      var __sp = (s.counters || {}).__speaking_total  || 0;
+      var __wr = (s.counters || {}).__writing_total   || 0;
+      if (__lt >= 50  && __sp >= 50  && __wr >= 50)  unlock('all_rounder');
+      if (__lt >= 500 && __sp >= 500 && __wr >= 500) unlock('multi_lingual');
+
+      // 1日のボリューム（デイリー50/100/200）
+      var __maxDaily = 0;
+      Object.keys(s.counters || {}).forEach(function (k) {
+        if (k.indexOf('__daily/') === 0) {
+          var v = s.counters[k] || 0;
+          if (v > __maxDaily) __maxDaily = v;
+        }
+      });
+      if (__maxDaily >= 50)  unlock('daily_50');
+      if (__maxDaily >= 100) unlock('daily_100');
+      if (__maxDaily >= 200) unlock('daily_200');
+
+      // 4時間スパン（不眠不休）
+      var __spanOk = false;
+      Object.keys(s.counters || {}).forEach(function (k) {
+        if (__spanOk) return;
+        if (k.indexOf('__day_first/') !== 0) return;
+        var date = k.slice('__day_first/'.length);
+        var first = s.counters[k];
+        var last = s.counters['__day_last/' + date];
+        if (first && last && (last - first) >= 4 * 3600 * 1000) __spanOk = true;
+      });
+      if (__spanOk) unlock('no_sleep');
+
+      // 5時間帯コンプ（時計マスター）
+      var __periods = ['morning', 'noon', 'evening', 'night', 'midnight'];
+      var __pCount = __periods.filter(function (p) { return (s.counters || {})['__period/' + p]; }).length;
+      if (__pCount >= 5) unlock('clock_master');
+
+      // 7曜日コンプ（七曜制覇）
+      var __dowCount = 0;
+      for (var __i = 0; __i < 7; __i++) if ((s.counters || {})['__dow/' + __i]) __dowCount++;
+      if (__dowCount >= 7) unlock('weekday_master');
+
+      // 24時間コンプ（24時間バトラー）
+      var __hourCount = 0;
+      for (var __h = 0; __h < 24; __h++) if ((s.counters || {})['__hour/' + __h]) __hourCount++;
+      if (__hourCount >= 24) unlock('hour_master');
+
+      // ランク連動（昇格 / 頂への道 / 英語仙人）
+      try {
+        if (typeof window.__getEnglishQuizRankInfo === 'function' && typeof window.__getEnglishQuizCorrectCount === 'function') {
+          var __info = window.__getEnglishQuizRankInfo(window.__getEnglishQuizCorrectCount());
+          var __lv = (__info && __info.current && __info.current.lv) || 1;
+          var __lastLv = s.counters.__last_rank_lv || 0;
+          if (__lastLv > 0 && __lv > __lastLv) unlock('rank_up');
+          s.counters.__last_rank_lv = Math.max(__lastLv, __lv);
+          if (__lv >= 5)  unlock('peak_path');
+          if (__lv >= 10) unlock('eigo_sennin');
+        }
+      } catch (e) {}
+
+      // 行事系
+      if ((s.counters || {}).__special_new_year)  unlock('new_year_day');
+      if ((s.counters || {}).__special_tanabata)  unlock('tanabata');
+      if ((s.counters || {}).__special_halloween) unlock('halloween');
+      if ((s.counters || {}).__special_christmas) unlock('christmas');
+
+      // GW勇者（4/29〜5/5に5日）
+      var __gwDays = Object.keys(s.counters || {}).filter(function (k) { return k.indexOf('__gw/') === 0; }).length;
+      if (__gwDays >= 5) unlock('gw_warrior');
+
+      // 夏休み戦士（8月に20日）
+      var __augDays = Object.keys(s.counters || {}).filter(function (k) { return k.indexOf('__aug/') === 0; }).length;
+      if (__augDays >= 20) unlock('summer_warrior');
+
+      s.unlocked = unlocked;
+      saveState(s);
+
+      newly.forEach(function (id) {
+        var b = BADGES.find(function (x) { return x.id === id; });
+        if (b) showBadgeToast(b);
+      });
+      updateUI(unlocked);
+    }
+
+    function showBadgeToast(b) {
+      if (!document.body) return;
+      var t = document.createElement('div');
+      t.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.9);z-index:2147483647;background:linear-gradient(135deg,#fcd34d,#f59e0b);color:#1f2937;padding:22px 30px;border-radius:18px;box-shadow:0 22px 60px rgba(0,0,0,0.4);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;text-align:center;opacity:0;transition:opacity .35s, transform .35s;min-width:240px;max-width:90vw;';
+      t.innerHTML = '<div style="font-size:12px;font-weight:700;letter-spacing:0.16em;margin-bottom:6px;color:#92400e;">🏅 BADGE GET!</div>'
+                  + '<div style="font-size:48px;line-height:1;margin-bottom:8px;">' + b.icon + '</div>'
+                  + '<div style="font-size:18px;font-weight:800;">' + b.name + '</div>'
+                  + '<div style="font-size:11.5px;margin-top:6px;color:#78350f;">' + b.desc + '</div>';
+      document.body.appendChild(t);
+      requestAnimationFrame(function () { t.style.opacity = '1'; t.style.transform = 'translate(-50%,-50%) scale(1)'; });
+      setTimeout(function () {
+        t.style.opacity = '0'; t.style.transform = 'translate(-50%,-50%) scale(0.95)';
+        setTimeout(function () { try { t.parentNode && t.parentNode.removeChild(t); } catch (e) {} }, 450);
+      }, 3000);
+    }
+
+    // ホームメニュー「学習 / 今日の問題 / 履歴」の隣に「🏅 バッジ」カードを挿入する
+    function setupMenuEntry() {
+      if (window.__badgesMenuObserverInstalled) return;
+      window.__badgesMenuObserverInstalled = true;
+      var KEYWORDS = ['学習', '今日の問題', '履歴'];
+
+      function buildLabel() {
+        var s = loadState();
+        return { count: Object.keys(s.unlocked || {}).length, total: BADGES.length };
+      }
+
+      function setCardText(card) {
+        var lbl = buildLabel();
+        var walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null);
+        var nodes = [];
+        while (walker.nextNode()) {
+          var n = walker.currentNode;
+          if (n.textContent && n.textContent.trim()) nodes.push(n);
+        }
+        if (nodes.length >= 2) {
+          nodes[0].textContent = '🏅 バッジ';
+          nodes[1].textContent = lbl.count + ' / ' + lbl.total + ' 獲得';
+          for (var i = 2; i < nodes.length; i++) nodes[i].textContent = '';
+        } else if (nodes.length === 1) {
+          nodes[0].textContent = '🏅 バッジ ' + lbl.count + '/' + lbl.total;
+        } else {
+          card.appendChild(document.createTextNode('🏅 バッジ ' + lbl.count + '/' + lbl.total));
+        }
+      }
+
+      function findClickableCard(el) {
+        var cur = el;
+        for (var i = 0; i < 12 && cur && cur !== document.body; i++) {
+          var tag = (cur.tagName || '').toLowerCase();
+          var role = cur.getAttribute && cur.getAttribute('role');
+          var cls = String((cur.className && cur.className.baseVal) || cur.className || '');
+          var rect = null;
+          try { rect = cur.getBoundingClientRect(); } catch (e) {}
+          var clickable = (tag === 'button' || tag === 'a' || role === 'button' ||
+                           /cursor-pointer|hover:bg|rounded-(xl|2xl|lg|md)|shadow|border|p-[3-9]|p-1[0-9]/.test(cls));
+          if (clickable && rect && rect.width >= 60 && rect.height >= 36) {
+            if (cur.parentElement && cur.parentElement.children.length >= 2) return cur;
+          }
+          cur = cur.parentElement;
+        }
+        return null;
+      }
+
+      function findMenu() {
+        var matches = [];
+        var all;
+        try { all = document.body.getElementsByTagName('*'); } catch (e) { return null; }
+        for (var i = 0; i < all.length; i++) {
+          var el = all[i];
+          if (!el || (el.id && el.id.indexOf('__badges') === 0)) continue;
+          var t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+          if (!t || t.length > 24) continue;
+          for (var k = 0; k < KEYWORDS.length; k++) {
+            var kw = KEYWORDS[k];
+            if (t === kw) { matches.push({ el: el, kw: kw }); break; }
+          }
+        }
+        if (matches.length < 2) return null;
+        // 各キーワードについて最も深い要素を採用
+        var byKw = {};
+        matches.forEach(function (m) {
+          var prev = byKw[m.kw];
+          if (!prev) { byKw[m.kw] = m; return; }
+          var dPrev = 0, dCur = 0, p;
+          for (p = prev.el; p; p = p.parentElement) dPrev++;
+          for (p = m.el; p; p = p.parentElement) dCur++;
+          if (dCur > dPrev) byKw[m.kw] = m;
+        });
+        var keys = Object.keys(byKw);
+        if (keys.length < 2) return null;
+        var cards = keys.map(function (k) { return findClickableCard(byKw[k].el); }).filter(Boolean);
+        if (cards.length < 2) return null;
+        // 共通親（最も多くのカードの親）を採用
+        var counts = [];
+        cards.forEach(function (c) {
+          var p = c.parentElement;
+          if (!p) return;
+          var f = null;
+          for (var i = 0; i < counts.length; i++) if (counts[i].p === p) { f = counts[i]; break; }
+          if (f) f.n++; else counts.push({ p: p, n: 1 });
+        });
+        counts.sort(function (a, b) { return b.n - a.n; });
+        if (!counts[0] || counts[0].n < 2) return null;
+        var parent = counts[0].p;
+        var template = null;
+        for (var j = 0; j < cards.length; j++) if (cards[j].parentElement === parent) { template = cards[j]; break; }
+        return { parent: parent, template: template };
+      }
+
+      function inject() {
+        var existing = document.getElementById('__badges-menu-card');
+        if (existing && existing.isConnected && existing.parentElement) {
+          setCardText(existing);
+          try { existing.style.background = '#fef3c7'; existing.style.backgroundImage = 'none'; existing.style.color = '#78350f'; } catch (e) {}
+          return true;
+        }
+        var info = findMenu();
+        if (!info || !info.template) return false;
+        var card = info.template.cloneNode(true);
+        card.id = '__badges-menu-card';
+        card.setAttribute('data-badges-menu', '1');
+        try { card.onclick = null; card.removeAttribute && card.removeAttribute('href'); } catch (e) {}
+        try {
+          var nested = card.querySelectorAll('*');
+          for (var i = 0; i < nested.length; i++) {
+            try { nested[i].onclick = null; } catch (e) {}
+            try { nested[i].removeAttribute && nested[i].removeAttribute('onclick'); } catch (e) {}
+            try { nested[i].removeAttribute && nested[i].removeAttribute('href'); } catch (e) {}
+          }
+        } catch (e) {}
+        try { card.style.outline = '2px solid #fcd34d'; card.style.outlineOffset = '0px'; card.style.background = '#fef3c7'; card.style.backgroundImage = 'none'; card.style.color = '#78350f'; } catch (e) {}
+        setCardText(card);
+        var clickHandler = function (ev) {
+          try { ev.stopImmediatePropagation(); } catch (e) {}
+          try { ev.stopPropagation(); } catch (e) {}
+          try { ev.preventDefault(); } catch (e) {}
+          openBadgePage();
+        };
+        card.addEventListener('click', clickHandler, true);
+        card.addEventListener('click', clickHandler, false);
+        card.addEventListener('touchend', clickHandler, true);
+        info.parent.appendChild(card);
+        return true;
+      }
+
+      function buildFallback() {
+        if (document.getElementById('__badges-fallback-card')) return;
+        if (!document.body) return;
+        var lbl = buildLabel();
+        var btn = document.createElement('button');
+        btn.id = '__badges-fallback-card';
+        btn.type = 'button';
+        btn.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483640;background:linear-gradient(135deg,#fcd34d,#f59e0b);color:#1f2937;padding:10px 18px;border:none;border-radius:9999px;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 8px 24px rgba(245,158,11,0.4);display:flex;align-items:center;gap:8px;-webkit-tap-highlight-color:transparent;';
+        btn.innerHTML = '<span style="font-size:18px;line-height:1;">🏅</span><span>バッジ</span><span id="__badges-fallback-count" style="background:rgba(255,255,255,0.45);padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;">' + lbl.count + ' / ' + lbl.total + '</span>';
+        btn.addEventListener('click', function (ev) {
+          try { ev.stopImmediatePropagation(); } catch (e) {}
+          try { ev.stopPropagation(); } catch (e) {}
+          try { ev.preventDefault(); } catch (e) {}
+          openBadgePage();
+        }, true);
+        document.body.appendChild(btn);
+      }
+
+      function updateFallback() {
+        var c = document.getElementById('__badges-fallback-count');
+        if (!c) return;
+        var lbl = buildLabel();
+        c.textContent = lbl.count + ' / ' + lbl.total;
+      }
+
+      // 「📜 称号 → 🏅 バッジ」の順で並べるようメニューカードの順序を強制
+      function enforceOrder() {
+        var rank = document.getElementById('__rank-menu-card');
+        var badges = document.getElementById('__badges-menu-card');
+        if (!rank || !badges || rank.parentElement !== badges.parentElement) return;
+        var p = rank.parentElement;
+        if (rank.nextElementSibling === badges && badges.nextElementSibling === null) return;
+        try { p.appendChild(rank); p.appendChild(badges); } catch (e) {}
+      }
+
+      function tick() {
+        try {
+          var ok = inject();
+          if (ok) {
+            var fb = document.getElementById('__badges-fallback-card');
+            if (fb && fb.parentNode) try { fb.parentNode.removeChild(fb); } catch (e) {}
+          } else {
+            updateFallback();
+          }
+          enforceOrder();
+        } catch (e) {}
+      }
+
+      tick();
+      setTimeout(tick, 400);
+      setTimeout(tick, 1200);
+      setTimeout(tick, 2500);
+      setTimeout(function () {
+        if (!document.getElementById('__badges-menu-card')) buildFallback();
+      }, 5000);
+      setInterval(tick, 1500);
+      try {
+        var obs = new MutationObserver(function () { tick(); });
+        obs.observe(document.body, { childList: true, subtree: true });
+        window.__badgesMenuObserver = obs;
+      } catch (e) {}
+    }
+
+    // 独立ページ風のフルスクリーンUI
+    function openBadgePage() {
+      if (document.getElementById('__badges-overlay')) return;
+      var s = loadState();
+      var unlocked = s.unlocked || {};
+      var unlockedCount = Object.keys(unlocked).length;
+      var ov = document.createElement('div');
+      ov.id = '__badges-overlay';
+      ov.style.cssText = 'position:fixed;inset:0;background:#f9fafb;z-index:2147483646;display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;overflow:hidden;';
+
+      var header = document.createElement('div');
+      // iOSセーフエリア（ノッチ・動的アイランド）を避けるため padding-top を加算
+      header.style.cssText = 'flex:0 0 auto;background:linear-gradient(135deg,#fcd34d,#f59e0b);color:#1f2937;padding:max(14px, env(safe-area-inset-top, 14px)) 16px 14px;display:flex;align-items:center;gap:10px;box-shadow:0 2px 8px rgba(0,0,0,0.08);position:sticky;top:0;z-index:2;';
+      header.innerHTML = ''
+        + '<button type="button" id="__badges-back" aria-label="戻る" style="border:none;background:#fff;color:#92400e;padding:8px 14px 8px 10px;border-radius:9999px;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;gap:4px;flex-shrink:0;line-height:1;box-shadow:0 2px 6px rgba(0,0,0,0.12);-webkit-tap-highlight-color:transparent;">'
+        +   '<span style="font-size:18px;line-height:1;">←</span><span>戻る</span>'
+        + '</button>'
+        + '<div style="flex:1;min-width:0;">'
+        +   '<div style="font-weight:800;font-size:16px;line-height:1.2;">🏅 バッジコレクション</div>'
+        +   '<div style="font-size:11.5px;color:#78350f;margin-top:2px;">獲得 <strong>' + unlockedCount + '</strong> / ' + BADGES.length + '</div>'
+        + '</div>'
+        + '<button type="button" id="__badges-close-x" aria-label="閉じる" style="border:none;background:rgba(255,255,255,0.6);width:36px;height:36px;border-radius:9999px;font-size:20px;cursor:pointer;color:#92400e;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;line-height:1;-webkit-tap-highlight-color:transparent;">×</button>';
+
+      var listWrap = document.createElement('div');
+      listWrap.style.cssText = 'flex:1 1 auto;overflow-y:auto;padding:12px 14px 90px;-webkit-overflow-scrolling:touch;';
+      // 3×11 のグリッドレイアウト（アイコン + 名前のみ、タップで詳細）
+      var list = document.createElement('div');
+      list.style.cssText = 'max-width:540px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;';
+
+      function showBadgeDetail(b, isUnlocked) {
+        var existing = document.getElementById('__badges-detail-modal');
+        if (existing && existing.parentNode) { try { existing.parentNode.removeChild(existing); } catch (e) {} }
+        var modal = document.createElement('div');
+        modal.id = '__badges-detail-modal';
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:20px;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;-webkit-tap-highlight-color:transparent;';
+        var card = document.createElement('div');
+        card.style.cssText = 'background:#fff;border-radius:18px;max-width:340px;width:100%;padding:26px 22px 22px;box-shadow:0 22px 60px rgba(0,0,0,0.45);text-align:center;box-sizing:border-box;';
+        card.innerHTML = '<div style="font-size:64px;line-height:1;margin-bottom:10px;' + (isUnlocked ? '' : 'filter:grayscale(1);opacity:0.55;') + '">' + b.icon + '</div>'
+                       + '<div style="font-size:10.5px;font-weight:700;color:#9ca3af;letter-spacing:0.14em;margin-bottom:4px;">' + (b.cat || '').toUpperCase() + '</div>'
+                       + '<div style="font-size:19px;font-weight:800;color:#111827;margin-bottom:8px;">' + b.name + (isUnlocked ? ' <span style="background:#10b981;color:#fff;font-size:11px;padding:2px 10px;border-radius:9999px;font-weight:700;vertical-align:middle;margin-left:4px;">獲得済</span>' : '') + '</div>'
+                       + '<div style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:' + (isUnlocked ? '16px' : '10px') + ';">' + b.desc + '</div>'
+                       + (isUnlocked ? '' : '<div style="font-size:12px;color:#92400e;background:#fef3c7;padding:9px 12px;border-radius:10px;line-height:1.5;margin-bottom:16px;">💡 ' + b.hint + '</div>')
+                       + '<button type="button" id="__badges-detail-close" style="border:none;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;padding:10px 30px;border-radius:9999px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;box-shadow:0 6px 18px rgba(217,119,6,0.35);">閉じる</button>';
+        modal.appendChild(card);
+        function closeDetail() { try { modal.parentNode && modal.parentNode.removeChild(modal); } catch (e) {} }
+        modal.addEventListener('click', function (ev) { if (ev.target === modal) closeDetail(); });
+        var closeBtn = card.querySelector('#__badges-detail-close');
+        if (closeBtn) {
+          var stop = function (ev) { try { ev.stopPropagation(); } catch (e) {} closeDetail(); };
+          closeBtn.addEventListener('click', stop);
+          closeBtn.addEventListener('touchend', stop);
+        }
+        document.body.appendChild(modal);
+      }
+
+      BADGES.forEach(function (b) {
+        var u = !!unlocked[b.id];
+        var cell = document.createElement('button');
+        cell.type = 'button';
+        cell.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:6px;padding:12px 4px 10px;border-radius:12px;background:' + (u ? 'linear-gradient(135deg,#fef3c7,#fde68a)' : '#fff') + ';border:1px solid ' + (u ? '#fcd34d' : '#e5e7eb') + ';' + (u ? '' : 'opacity:0.78;') + 'cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;min-height:96px;transition:transform 0.1s;';
+        cell.innerHTML = '<div style="font-size:32px;line-height:1;' + (u ? '' : 'filter:grayscale(1);') + '">' + b.icon + '</div>'
+                      + '<div style="font-size:10px;font-weight:700;color:#111827;text-align:center;line-height:1.3;word-break:break-word;padding:0 2px;">' + b.name + '</div>';
+        var openDetail = function (ev) {
+          try { ev.stopPropagation(); } catch (e) {}
+          try { ev.preventDefault(); } catch (e) {}
+          showBadgeDetail(b, u);
+        };
+        cell.addEventListener('click', openDetail);
+        cell.addEventListener('touchend', openDetail);
+        list.appendChild(cell);
+      });
+
+      listWrap.appendChild(list);
+
+      // 画面下部にも大きな「閉じる」ボタンを配置（リストセクションをスクロールしたところからも戻れるように）
+      var bottomBar = document.createElement('div');
+      bottomBar.style.cssText = 'position:absolute;left:0;right:0;bottom:0;padding:10px 16px calc(14px + env(safe-area-inset-bottom, 0px));background:linear-gradient(to top, rgba(249,250,251,0.98) 60%, rgba(249,250,251,0));display:flex;justify-content:center;pointer-events:none;';
+      var bottomBtn = document.createElement('button');
+      bottomBtn.type = 'button';
+      bottomBtn.id = '__badges-close-bottom';
+      bottomBtn.textContent = '← メニューに戻る';
+      bottomBtn.style.cssText = 'pointer-events:auto;border:none;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;padding:12px 28px;border-radius:9999px;font-size:14px;font-weight:800;cursor:pointer;box-shadow:0 8px 24px rgba(217,119,6,0.4);-webkit-tap-highlight-color:transparent;font-family:inherit;';
+      bottomBar.appendChild(bottomBtn);
+
+      ov.appendChild(header);
+      ov.appendChild(listWrap);
+      ov.appendChild(bottomBar);
+      document.body.appendChild(ov);
+
+      function closeBadgePage() {
+        try { ov.parentNode && ov.parentNode.removeChild(ov); } catch (e) {}
+        document.removeEventListener('keydown', keyHandler);
+      }
+      var keyHandler = function (ev) { if (ev.key === 'Escape') { ev.preventDefault(); closeBadgePage(); } };
+      var stopAndClose = function (ev) {
+        try { ev.stopImmediatePropagation(); } catch (e) {}
+        try { ev.stopPropagation(); } catch (e) {}
+        try { ev.preventDefault(); } catch (e) {}
+        closeBadgePage();
+      };
+      var backBtn = header.querySelector('#__badges-back');
+      var closeXBtn = header.querySelector('#__badges-close-x');
+      if (backBtn) {
+        backBtn.addEventListener('click', stopAndClose, true);
+        backBtn.addEventListener('touchend', stopAndClose, true);
+      }
+      if (closeXBtn) {
+        closeXBtn.addEventListener('click', stopAndClose, true);
+        closeXBtn.addEventListener('touchend', stopAndClose, true);
+      }
+      bottomBtn.addEventListener('click', stopAndClose, true);
+      bottomBtn.addEventListener('touchend', stopAndClose, true);
+      document.addEventListener('keydown', keyHandler);
+    }
+
+    function updateUI(unlocked) {
+      // メニューカードの獲得カウント表示を更新
+      var card = document.getElementById('__badges-menu-card');
+      if (!card) return;
+      var walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null);
+      var nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      if (nodes.length >= 2) {
+        nodes[1].textContent = (Object.keys(unlocked || {}).length) + ' / ' + BADGES.length + ' 獲得';
+      } else if (nodes.length === 1) {
+        nodes[0].textContent = '🏅 バッジ ' + (Object.keys(unlocked || {}).length) + '/' + BADGES.length;
+      }
+    }
+
+    function init() {
+      setupMenuEntry();
+      recordStudyIfChanged();
+      evaluate();
+      setInterval(function () { recordStudyIfChanged(); evaluate(); }, 2500);
+      window.addEventListener('storage', function (ev) {
+        if (ev.key && ev.key.indexOf(STORAGE_PREFIX) === 0) { recordStudyIfChanged(); evaluate(); }
+      });
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+    setTimeout(init, 1500);
+    setTimeout(init, 3500);
+  })();
   </script>
 
   <script type="text/babel" data-type="module" data-presets="react">
@@ -2282,7 +3455,7 @@ const HomeView = ({ onStart, statsData, historyData, onReview, onExportText, onI
               <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl mb-4 shadow-inner">
                 <BookOpen size={32} />
               </div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800 mb-2">中学英語マスター</h1>
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800 mb-2">EnglishMaster</h1>
               <p className="text-slate-500 text-xs sm:text-sm">毎日の積み重ねで英語力をアップしよう</p><button type="button" onClick={() => window.location.reload()} className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 text-xs font-bold shadow-sm transition" title="画面を再読み込み"><RefreshCw size={14} />画面を更新</button>
             </div>
 
@@ -3269,7 +4442,7 @@ export default function App() {
         <div className="bg-white text-slate-800 px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-100 flex justify-between items-center z-20 relative shadow-sm shrink-0">
             <span className="font-extrabold text-lg flex items-center gap-2">
               <span className="w-8 h-8 bg-blue-600 text-white rounded-lg flex items-center justify-center text-sm shadow-inner">英</span>
-              中学英語
+              EnglishMaster
             </span>
             {currentView !== 'home' && currentView !== 'result' && (
                 <button 
