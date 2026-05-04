@@ -794,7 +794,8 @@
     window.__updateRankBadge = updateBadge;
 
     function init() {
-      setupRankMenuEntry();
+      // setupRankMenuEntry(); // 案5でReact化したため無効化（React側のタブで管理）
+      window.__openRankPage = openRankPage;
       updateBadge();
       setInterval(updateBadge, 2000);
       window.addEventListener('storage', function (ev) {
@@ -1516,7 +1517,8 @@
     }
 
     function init() {
-      setupMenuEntry();
+      // setupMenuEntry(); // 案5でReact化したため無効化（React側のタブで管理）
+      window.__openBadgePage = openBadgePage;
       recordStudyIfChanged();
       evaluate();
       setInterval(function () { recordStudyIfChanged(); evaluate(); }, 2500);
@@ -1534,11 +1536,169 @@
   })();
   </script>
 
+  <!-- 正解/不正解の効果音 -->
+  <script>
+  (function () {
+    'use strict';
+    var STORAGE_PREFIX = 'english-quiz:';
+    var audioCtx = null;
+    var lastPlayMs = 0;
+
+    function ensureCtx() {
+      if (!audioCtx) {
+        try {
+          var AC = window.AudioContext || window.webkitAudioContext;
+          if (AC) audioCtx = new AC();
+        } catch (e) {}
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        try { audioCtx.resume(); } catch (e) {}
+      }
+      return audioCtx;
+    }
+
+    // freqs: [{freq: Hz, at: 秒}], type: 'sine'|'square'|'sawtooth'|'triangle'
+    function playTone(freqs, type, vol, dur) {
+      var ctx = ensureCtx();
+      if (!ctx) return;
+      try {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = type;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        var t0 = ctx.currentTime;
+        freqs.forEach(function (f) {
+          osc.frequency.setValueAtTime(f.freq, t0 + (f.at || 0));
+        });
+        gain.gain.setValueAtTime(vol, t0);
+        gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+        osc.start(t0);
+        osc.stop(t0 + dur);
+      } catch (e) {}
+    }
+
+    function play(correct) {
+      // ミュートチェック（将来拡張用）
+      try {
+        if (localStorage.getItem(STORAGE_PREFIX + '__sound_muted') === '1') return;
+      } catch (e) {}
+      // 連続二重送信防止（200ms）
+      var now = Date.now();
+      if (now - lastPlayMs < 200) return;
+      lastPlayMs = now;
+      if (correct) {
+        // ピンポン：880Hz→さらに高1320Hz のベル調
+        playTone([{ freq: 880, at: 0 }, { freq: 1320, at: 0.13 }], 'sine', 0.25, 0.4);
+      } else {
+        // ブッブー：180Hz→さらに低140Hz の荒めな音
+        playTone([{ freq: 180, at: 0 }, { freq: 140, at: 0.18 }], 'sawtooth', 0.18, 0.45);
+      }
+    }
+    window.__playQuizSound = play;
+
+    // 初回ユーザー操作で AudioContext を unlock（iOS Safari 対策）
+    function unlock() {
+      ensureCtx();
+      document.removeEventListener('click', unlock, true);
+      document.removeEventListener('touchend', unlock, true);
+      document.removeEventListener('keydown', unlock, true);
+    }
+    document.addEventListener('click', unlock, true);
+    document.addEventListener('touchend', unlock, true);
+    document.addEventListener('keydown', unlock, true);
+
+    // localStorage の履歴書き込みをフックして自動で鳴らす
+    // （一問一答・短文和訳・アウトプット特訓のいずれも、解答ごとに history/results 系キーへ保存される前提）
+    try {
+      var origSet = localStorage.setItem.bind(localStorage);
+      localStorage.setItem = function (key, value) {
+        var wasNew = false;
+        try { wasNew = localStorage.getItem(key) === null; } catch (e) {}
+        var result = origSet(key, value);
+        try {
+          if (typeof key !== 'string') return result;
+          if (key.indexOf(STORAGE_PREFIX) !== 0) return result;
+          // 内部キー（__で始まる）は無視
+          if (key.indexOf(STORAGE_PREFIX + '__') === 0) return result;
+          if (!/(history|results|sessions|answers|log|quiz)/i.test(key)) return result;
+          // 新規エントリのみ鳴らす（同じエントリの更新で二重しない）
+          if (!wasNew) return result;
+          var data = JSON.parse(value);
+          if (!data || typeof data !== 'object') return result;
+          if (data.correct === true || data.isCorrect === true || data.is_correct === true) {
+            play(true);
+          } else if (data.correct === false || data.isCorrect === false || data.is_correct === false) {
+            play(false);
+          }
+        } catch (e) {}
+        return result;
+      };
+    } catch (e) {}
+  })();
+  </script>
+
   <script type="text/babel" data-type="module" data-presets="react">
     import { createRoot } from 'react-dom/client';
 
   import React, { useState, useEffect, useRef } from 'react';
 import { Volume2, CheckCircle2, XCircle, ArrowRight, Home, BookOpen, MessageCircle, Ear, Award, History, RefreshCw, CalendarDays, AlertCircle, ChevronLeft, ChevronRight, Mic, PenTool, ListChecks, Settings, Download, Upload } from 'lucide-react';
+
+// 称号タブ（Lv表示と自動更新）
+function RankTabButton() {
+  const [info, setInfo] = useState({ icon: '📜', lv: 1 });
+  useEffect(() => {
+    const update = () => {
+      try {
+        if (window.__getEnglishQuizRankInfo && window.__getEnglishQuizCorrectCount) {
+          const i = window.__getEnglishQuizRankInfo(window.__getEnglishQuizCorrectCount());
+          if (i && i.current) setInfo({ icon: i.current.icon, lv: i.current.lv });
+        }
+      } catch (e) {}
+    };
+    update();
+    const id = setInterval(update, 2000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <button
+      onClick={() => window.__openRankPage && window.__openRankPage()}
+      className="px-3 sm:px-4 py-4 min-w-[80px] sm:w-32 text-xs font-bold transition-colors border-b-2 border-transparent text-slate-400 hover:text-slate-600 flex flex-col items-center gap-1"
+      title="称号を見る"
+    >
+      <span className="text-lg leading-none">{info.icon}</span>
+      <span>称号 Lv.{info.lv}</span>
+    </button>
+  );
+}
+
+// バッジタブ（獲得数表示と自動更新）
+function BadgeTabButton() {
+  const [count, setCount] = useState({ unlocked: 0, total: 33 });
+  useEffect(() => {
+    const update = () => {
+      try {
+        const raw = localStorage.getItem('english-quiz:__badges/state_v1');
+        const s = raw ? JSON.parse(raw) : null;
+        const u = s && s.unlocked ? Object.keys(s.unlocked).length : 0;
+        setCount({ unlocked: u, total: 33 });
+      } catch (e) {}
+    };
+    update();
+    const id = setInterval(update, 2000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <button
+      onClick={() => window.__openBadgePage && window.__openBadgePage()}
+      className="px-3 sm:px-4 py-4 min-w-[80px] sm:w-32 text-xs font-bold transition-colors border-b-2 border-transparent text-slate-400 hover:text-slate-600 flex flex-col items-center gap-1"
+      title="バッジを見る"
+    >
+      <span className="text-lg leading-none">🏅</span>
+      <span>バッジ {count.unlocked}/{count.total}</span>
+    </button>
+  );
+}
 
 // --- 未実装データセットのフォールバック（実データを用意するまで空配列で動かす） ---
 const SENTENCES_LEVEL4 = [];
@@ -3440,6 +3600,8 @@ const HomeView = ({ onStart, statsData, historyData, onReview, onExportText, onI
             <span className="absolute top-3 right-3 w-2 h-2 rounded-full bg-rose-500"></span>
           )}
         </button>
+        <RankTabButton />
+        <BadgeTabButton />
         <button 
           onClick={() => setTab('settings')} 
           className={`px-3 sm:px-4 py-4 min-w-[80px] sm:w-32 text-xs font-bold transition-colors border-b-2 flex flex-col items-center gap-1 ${tab === 'settings' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
