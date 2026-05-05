@@ -39,6 +39,23 @@
       color: #666;
       font-family: sans-serif;
     }
+    /* 一問一答などでタップ後に選択肢ボタンへフォーカスが残り、
+       薄い青のリング・枠・背景が付いたままになる問題を抑止する。
+       キーボード操作（:focus-visible）の場合のみフォーカス表示を残す。 */
+    button:focus:not(:focus-visible) {
+      outline: none !important;
+      box-shadow: none !important;
+      --tw-ring-shadow: 0 0 #0000 !important;
+      --tw-ring-offset-shadow: 0 0 #0000 !important;
+    }
+    /* タッチデバイス（マウスホバー非対応）では :hover 状態が
+       タップ後も残ってしまうため、ホバー時の背景色変化を無効化する。
+       Tailwind の hover:bg-blue-* / hover:bg-slate-* などが対象。 */
+    @media (hover: none) {
+      button:hover {
+        background-color: revert !important;
+      }
+    }
   </style>
 </head>
 <body>
@@ -3566,7 +3583,14 @@ const HomeView = ({ onStart, statsData, historyData, onReview, onExportText, onI
         }
       }
     });
-    return anyAcc ? passed.size : dcOutputs.length;
+    // モーダルで手動チェックされた項目も合算してメニュー画面と同期させる
+        const _dcOuts = Array.isArray(dcOutputs) ? dcOutputs : [];
+        const _combined = new Set(passed);
+        _dcOuts.forEach(function (k, i) {
+          if (typeof k === 'string' && k) _combined.add(k);
+          else _combined.add('__manual_' + i);
+        });
+        return Math.min(3, _combined.size);
   })();
 
   const getGroupDailyProgress = (modes) => {
