@@ -3102,6 +3102,15 @@ const ListeningTest = ({ questions, currentIndex, setCurrentIndex, score, setSco
           
           <p className="text-slate-500 text-sm mb-4">聞こえた英単語を入力してください</p>
 
+          <details key={currentIndex} className="mb-4 w-full">
+            <summary className="cursor-pointer text-sm font-bold text-amber-700 select-none flex items-center justify-center gap-2 py-2 px-4 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors list-none">
+              💡 ヒント（日本語訳を表示）
+            </summary>
+            <p className="mt-3 text-center text-xl font-bold text-slate-800 bg-amber-50 p-3 rounded-lg border border-amber-200">
+              {currentQ?.ja}
+            </p>
+          </details>
+
           <input
             ref={inputRef}
             type="text"
@@ -3583,14 +3592,7 @@ const HomeView = ({ onStart, statsData, historyData, onReview, onExportText, onI
         }
       }
     });
-    // モーダルで手動チェックされた項目も合算してメニュー画面と同期させる
-        const _dcOuts = Array.isArray(dcOutputs) ? dcOutputs : [];
-        const _combined = new Set(passed);
-        _dcOuts.forEach(function (k, i) {
-          if (typeof k === 'string' && k) _combined.add(k);
-          else _combined.add('__manual_' + i);
-        });
-        return Math.min(3, _combined.size);
+        return passed.size;
   })();
 
   const getGroupDailyProgress = (modes) => {
@@ -4305,7 +4307,7 @@ function TodayStudyHome({ dailyChecks, todayModal, setTodayModal, onStart, stats
         <TodayChoiceModal
           title="どの種類にしますか？"
           subtitle="アウトプット特訓"
-          message="一日に3種類すべてを解きましょう（80点以上でチェック）"
+          message="一日に3種類すべてを解きましょう。80点以上または、履歴から復習で、メニュー画面にもチェックが入ります。"
           variant="output"
           choices={outputChoices}
           onPick={(m) => {
