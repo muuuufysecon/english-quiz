@@ -1536,13 +1536,15 @@
   })();
   </script>
 
-  <!-- 正解/不正解の効果音 -->
+  <!-- 正解/不正解の効果音（v2: 多重検知） -->
   <script>
   (function () {
     'use strict';
     var STORAGE_PREFIX = 'english-quiz:';
     var audioCtx = null;
     var lastPlayMs = 0;
+    var lastCorrect = null;
+    var lastKeyCount = null;
 
     function ensureCtx() {
       if (!audioCtx) {
@@ -1557,10 +1559,9 @@
       return audioCtx;
     }
 
-    // freqs: [{freq: Hz, at: 秒}], type: 'sine'|'square'|'sawtooth'|'triangle'
     function playTone(freqs, type, vol, dur) {
       var ctx = ensureCtx();
-      if (!ctx) return;
+      if (!ctx) return false;
       try {
         var osc = ctx.createOscillator();
         var gain = ctx.createGain();
@@ -1575,41 +1576,80 @@
         gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
         osc.start(t0);
         osc.stop(t0 + dur);
+        return true;
+      } catch (e) { return false; }
+    }
+
+    function totalQuizKeys() {
+      var n = 0;
+      try {
+        var len = localStorage.length;
+        for (var i = 0; i < len; i++) {
+          var k = localStorage.key(i);
+          if (!k) continue;
+          if (k.indexOf(STORAGE_PREFIX) !== 0) continue;
+          if (k.indexOf(STORAGE_PREFIX + '__') === 0) continue;
+          n++;
+        }
       } catch (e) {}
+      return n;
+    }
+
+    function getCorrectCount() {
+      try {
+        if (typeof window.__getEnglishQuizCorrectCount === 'function') {
+          return window.__getEnglishQuizCorrectCount();
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    function syncBaseline() {
+      lastCorrect = getCorrectCount();
+      lastKeyCount = totalQuizKeys();
     }
 
     function play(correct) {
-      // ミュートチェック（将来拡張用）
       try {
-        if (localStorage.getItem(STORAGE_PREFIX + '__sound_muted') === '1') return;
+        if (localStorage.getItem(STORAGE_PREFIX + '__sound_muted') === '1') return false;
       } catch (e) {}
-      // 連続二重送信防止（200ms）
       var now = Date.now();
-      if (now - lastPlayMs < 200) return;
+      if (now - lastPlayMs < 250) return false;
       lastPlayMs = now;
+      var ok;
       if (correct) {
-        // ピンポン：880Hz→さらに高1320Hz のベル調
-        playTone([{ freq: 880, at: 0 }, { freq: 1320, at: 0.13 }], 'sine', 0.25, 0.4);
+        ok = playTone([{ freq: 880, at: 0 }, { freq: 1320, at: 0.13 }], 'sine', 0.25, 0.4);
       } else {
-        // ブッブー：180Hz→さらに低140Hz の荒めな音
-        playTone([{ freq: 180, at: 0 }, { freq: 140, at: 0.18 }], 'sawtooth', 0.18, 0.45);
+        ok = playTone([{ freq: 200, at: 0 }, { freq: 140, at: 0.18 }], 'sawtooth', 0.18, 0.45);
       }
+      // ポーリング検知が同じ変化を二重検知しないようベースラインを更新
+      setTimeout(syncBaseline, 30);
+      return ok;
     }
     window.__playQuizSound = play;
 
+    // デバッグ用テスト関数（DevTools コンソールで呼べる：__testQuizSound() / __testQuizSound(false)）
+    window.__testQuizSound = function (correct) {
+      var ctx = ensureCtx();
+      console.log('[効果音テスト] AudioContext state:', ctx ? ctx.state : '(none)');
+      var ok = play(correct === false ? false : true);
+      console.log('[効果音テスト] 再生結果:', ok ? '成功' : '失敗 (デバイスのミュートやサイレントモードを確認してください)');
+    };
+
     // 初回ユーザー操作で AudioContext を unlock（iOS Safari 対策）
-    function unlock() {
-      ensureCtx();
-      document.removeEventListener('click', unlock, true);
-      document.removeEventListener('touchend', unlock, true);
-      document.removeEventListener('keydown', unlock, true);
-    }
+    function unlock() { ensureCtx(); }
     document.addEventListener('click', unlock, true);
     document.addEventListener('touchend', unlock, true);
     document.addEventListener('keydown', unlock, true);
 
-    // localStorage の履歴書き込みをフックして自動で鳴らす
-    // （一問一答・短文和訳・アウトプット特訓のいずれも、解答ごとに history/results 系キーへ保存される前提）
+    // 検知方1：localStorage.setItem フック（データ shape から正誤を判定）
+    function judgeFromData(data) {
+      if (!data || typeof data !== 'object') return null;
+      if (data.correct === true || data.isCorrect === true || data.is_correct === true) return true;
+      if (data.correct === false || data.isCorrect === false || data.is_correct === false) return false;
+      return null;
+    }
+
     try {
       var origSet = localStorage.setItem.bind(localStorage);
       localStorage.setItem = function (key, value) {
@@ -1617,24 +1657,88 @@
         try { wasNew = localStorage.getItem(key) === null; } catch (e) {}
         var result = origSet(key, value);
         try {
-          if (typeof key !== 'string') return result;
-          if (key.indexOf(STORAGE_PREFIX) !== 0) return result;
-          // 内部キー（__で始まる）は無視
-          if (key.indexOf(STORAGE_PREFIX + '__') === 0) return result;
-          if (!/(history|results|sessions|answers|log|quiz)/i.test(key)) return result;
-          // 新規エントリのみ鳴らす（同じエントリの更新で二重しない）
-          if (!wasNew) return result;
-          var data = JSON.parse(value);
-          if (!data || typeof data !== 'object') return result;
-          if (data.correct === true || data.isCorrect === true || data.is_correct === true) {
-            play(true);
-          } else if (data.correct === false || data.isCorrect === false || data.is_correct === false) {
-            play(false);
+          if (typeof key === 'string'
+              && key.indexOf(STORAGE_PREFIX) === 0
+              && key.indexOf(STORAGE_PREFIX + '__') !== 0
+              && wasNew) {
+            var data = null;
+            try { data = JSON.parse(value); } catch (e) {}
+            var verdict = judgeFromData(data);
+            if (verdict === true) play(true);
+            else if (verdict === false) play(false);
+            // verdict === null の場合は検知方2（ポーリング）に任せる
           }
         } catch (e) {}
         return result;
       };
     } catch (e) {}
+
+    // 検知方2：__getEnglishQuizCorrectCount と キー数をポーリング（フォールバック）
+    // データ shape が correct フィールドを含まない場合でもカウント変化で検知できる
+    setTimeout(syncBaseline, 1000); // rank script の初期化を待つ
+    setInterval(function () {
+      if (lastCorrect === null && lastKeyCount === null) {
+        syncBaseline();
+        return;
+      }
+      var curCorrect = getCorrectCount();
+      var curKeys = totalQuizKeys();
+      var deltaCorrect = (curCorrect != null && lastCorrect != null) ? (curCorrect - lastCorrect) : 0;
+      var deltaKeys = (lastKeyCount != null) ? (curKeys - lastKeyCount) : 0;
+
+      if (deltaCorrect > 0) {
+        // 正解数が増えた＝正解
+        play(true);
+      } else if (deltaKeys > 0 && deltaCorrect === 0) {
+        // 履歴キーは増えたが正解数は変わらない＝不正解
+        play(false);
+      }
+
+      lastCorrect = curCorrect;
+      lastKeyCount = curKeys;
+    }, 400);
+
+    // 検知方3：MutationObserver で「正解」「不正解」のテキスト出現を監視
+    // （React の per-question 判定が DOM に反映されるタイミングで鳴らす = 一問毎のフィードバック）
+    function checkFeedbackNode(el) {
+      if (!el || el.nodeType !== 1) return;
+      var text = (el.textContent || '').trim();
+      if (!text || text.length > 30) return;
+      // 「正解」「正解！」「正解!」など
+      if (text === '正解' || /^正解[!！　 ]/.test(text)) {
+        play(true);
+        return;
+      }
+      // 「不正解」「不正解！」「残念」「間違い」など
+      if (text === '不正解' || /^不正解[!！　 ]/.test(text)
+          || text === '残念' || /^残念[!！　 ]/.test(text)
+          || text === '間違い' || /^間違い[!！　 ]/.test(text)
+          || /^(不合格|ミス)[!！　 ]?/.test(text)) {
+        play(false);
+        return;
+      }
+    }
+
+    function setupFeedbackObserver() {
+      if (!document.body) { setTimeout(setupFeedbackObserver, 200); return; }
+      try {
+        var obs = new MutationObserver(function (mutations) {
+          for (var i = 0; i < mutations.length; i++) {
+            var added = mutations[i].addedNodes;
+            for (var j = 0; j < added.length; j++) {
+              checkFeedbackNode(added[j]);
+            }
+            // テキストノードの変更も見る（同じ要素の中身が書き換わるケース）
+            if (mutations[i].type === 'characterData') {
+              var t = mutations[i].target;
+              if (t && t.parentElement) checkFeedbackNode(t.parentElement);
+            }
+          }
+        });
+        obs.observe(document.body, { childList: true, subtree: true, characterData: true });
+      } catch (e) {}
+    }
+    setupFeedbackObserver();
   })();
   </script>
 
