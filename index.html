@@ -1427,18 +1427,12 @@
         card.innerHTML = '<div style="font-size:64px;line-height:1;margin-bottom:10px;' + (isUnlocked ? '' : 'filter:grayscale(1);opacity:0.55;') + '">' + b.icon + '</div>'
                        + '<div style="font-size:10.5px;font-weight:700;color:#9ca3af;letter-spacing:0.14em;margin-bottom:4px;">' + (b.cat || '').toUpperCase() + '</div>'
                        + '<div style="font-size:19px;font-weight:800;color:#111827;margin-bottom:8px;">' + b.name + (isUnlocked ? ' <span style="background:#10b981;color:#fff;font-size:11px;padding:2px 10px;border-radius:9999px;font-weight:700;vertical-align:middle;margin-left:4px;">獲得済</span>' : '') + '</div>'
-                       + '<div style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:' + (isUnlocked ? '16px' : '10px') + ';">' + b.desc + '</div>'
-                       + (isUnlocked ? '' : '<div style="font-size:12px;color:#92400e;background:#fef3c7;padding:9px 12px;border-radius:10px;line-height:1.5;margin-bottom:16px;">💡 ' + b.hint + '</div>')
-                       + '<button type="button" id="__badges-detail-close" style="border:none;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;padding:10px 30px;border-radius:9999px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;box-shadow:0 6px 18px rgba(217,119,6,0.35);">閉じる</button>';
+                       + '<div style="font-size:13px;color:#374151;line-height:1.6;' + (isUnlocked ? '' : 'margin-bottom:10px;') + '">' + b.desc + '</div>'
+                       + (isUnlocked ? '' : '<div style="font-size:12px;color:#92400e;background:#fef3c7;padding:9px 12px;border-radius:10px;line-height:1.5;">💡 ' + b.hint + '</div>');
         modal.appendChild(card);
         function closeDetail() { try { modal.parentNode && modal.parentNode.removeChild(modal); } catch (e) {} }
+        // 背景タップで閉じる（「閉じる」ボタンはタップ突き抜け防止のため削除）
         modal.addEventListener('click', function (ev) { if (ev.target === modal) closeDetail(); });
-        var closeBtn = card.querySelector('#__badges-detail-close');
-        if (closeBtn) {
-          var stop = function (ev) { try { ev.stopPropagation(); } catch (e) {} closeDetail(); };
-          closeBtn.addEventListener('click', stop);
-          closeBtn.addEventListener('touchend', stop);
-        }
         document.body.appendChild(modal);
       }
 
@@ -1610,11 +1604,13 @@
     }
 
     function play(correct) {
+      // 要望により正解音は無効化、不正解時のみ鳴らす
+      if (correct) return false;
       try {
         if (localStorage.getItem(STORAGE_PREFIX + '__sound_muted') === '1') return false;
       } catch (e) {}
       var now = Date.now();
-      if (now - lastPlayMs < 250) return false;
+      if (now - lastPlayMs < 600) return false;
       lastPlayMs = now;
       var ok;
       if (correct) {
@@ -1628,12 +1624,12 @@
     }
     window.__playQuizSound = play;
 
-    // デバッグ用テスト関数（DevTools コンソールで呼べる：__testQuizSound() / __testQuizSound(false)）
-    window.__testQuizSound = function (correct) {
+    // デバッグ用テスト関数（DevTools コンソールで呼べる：__testQuizSound() で不正解音をテスト）
+    window.__testQuizSound = function () {
       var ctx = ensureCtx();
       console.log('[効果音テスト] AudioContext state:', ctx ? ctx.state : '(none)');
-      var ok = play(correct === false ? false : true);
-      console.log('[効果音テスト] 再生結果:', ok ? '成功' : '失敗 (デバイスのミュートやサイレントモードを確認してください)');
+      var ok = play(false);
+      console.log('[効果音テスト] 不正解音の再生結果:', ok ? '成功' : '失敗 (デバイスのミュートやサイレントモードを確認してください)');
     };
 
     // 初回ユーザー操作で AudioContext を unlock（iOS Safari 対策）
@@ -1664,39 +1660,15 @@
             var data = null;
             try { data = JSON.parse(value); } catch (e) {}
             var verdict = judgeFromData(data);
-            if (verdict === true) play(true);
-            else if (verdict === false) play(false);
-            // verdict === null の場合は検知方2（ポーリング）に任せる
+            if (verdict === false) play(false);
+            // 正解音は鳴らさない（要望により削除）
           }
         } catch (e) {}
         return result;
       };
     } catch (e) {}
 
-    // 検知方2：__getEnglishQuizCorrectCount と キー数をポーリング（フォールバック）
-    // データ shape が correct フィールドを含まない場合でもカウント変化で検知できる
-    setTimeout(syncBaseline, 1000); // rank script の初期化を待つ
-    setInterval(function () {
-      if (lastCorrect === null && lastKeyCount === null) {
-        syncBaseline();
-        return;
-      }
-      var curCorrect = getCorrectCount();
-      var curKeys = totalQuizKeys();
-      var deltaCorrect = (curCorrect != null && lastCorrect != null) ? (curCorrect - lastCorrect) : 0;
-      var deltaKeys = (lastKeyCount != null) ? (curKeys - lastKeyCount) : 0;
-
-      if (deltaCorrect > 0) {
-        // 正解数が増えた＝正解
-        play(true);
-      } else if (deltaKeys > 0 && deltaCorrect === 0) {
-        // 履歴キーは増えたが正解数は変わらない＝不正解
-        play(false);
-      }
-
-      lastCorrect = curCorrect;
-      lastKeyCount = curKeys;
-    }, 400);
+    // （検知方2：ポーリングは「画面切り替えだけで誤検知」の原因になるため削除した）
 
     // 検知方3：MutationObserver で「正解」「不正解」のテキスト出現を監視
     // （React の per-question 判定が DOM に反映されるタイミングで鳴らす = 一問毎のフィードバック）
@@ -1704,11 +1676,7 @@
       if (!el || el.nodeType !== 1) return;
       var text = (el.textContent || '').trim();
       if (!text || text.length > 30) return;
-      // 「正解」「正解！」「正解!」など
-      if (text === '正解' || /^正解[!！　 ]/.test(text)) {
-        play(true);
-        return;
-      }
+      // （「正解」テキスト検知は削除：要望により不正解音のみ残す）
       // 「不正解」「不正解！」「残念」「間違い」など
       if (text === '不正解' || /^不正解[!！　 ]/.test(text)
           || text === '残念' || /^残念[!！　 ]/.test(text)
@@ -1739,6 +1707,54 @@
       } catch (e) {}
     }
     setupFeedbackObserver();
+
+    // 検知方4：一問一答対応 - 選択肢クリック後の状態変化を監視
+    // （正解時：何も表示せず次問に遷移、不正解時：選択肢に×が出現）
+    document.addEventListener('click', function (ev) {
+      try {
+        var btn = ev.target && ev.target.closest && ev.target.closest('button');
+        if (!btn) return;
+        // 内部用ボタン（マイクオフ、ランク・バッジタブ等）は除外
+        if (btn.id && (btn.id.indexOf('__') === 0 || btn.id.indexOf('mic-off') >= 0)) return;
+        var btnTitle = btn.getAttribute('title') || '';
+        if (/(称号を見る|バッジを見る|マイク)/.test(btnTitle)) return;
+        // 親に複数ボタンがある（≒選択肢グループ）かチェック
+        var parent = btn.parentElement;
+        if (!parent) return;
+        var siblingButtons = parent.querySelectorAll(':scope > button').length;
+        if (siblingButtons < 2) return;
+        // ボタンサイズチェック（小さなアイコンボタンは除外）
+        var rect = btn.getBoundingClientRect();
+        if (rect.width < 80 || rect.height < 30) return;
+
+        var snapshotText = btn.textContent || '';
+
+        setTimeout(function () {
+          try {
+            var stillConnected = btn.isConnected;
+            // 不正解判定：×／✗／❌ テキスト、XCircle SVG、赤系クラス
+            if (stillConnected) {
+              var newText = btn.textContent || '';
+              if (/[×✗❌]/.test(newText) && !/[×✗❌]/.test(snapshotText)) {
+                play(false); return;
+              }
+              var svgs = btn.getElementsByTagName('svg');
+              for (var i = 0; i < svgs.length; i++) {
+                var cls = (svgs[i].getAttribute('class') || '').toLowerCase();
+                if (cls.indexOf('x-circle') >= 0 || cls.indexOf('circle-x') >= 0) {
+                  play(false); return;
+                }
+              }
+              var btnCls = String(btn.className || '');
+              if (/(^|\s)(bg-red-[3-9]|border-red-[3-9]|text-red-[5-9]|ring-red)/.test(btnCls)) {
+                play(false); return;
+              }
+            }
+            // （正解判定は削除：タブ切り替えや画面遷移で誤検知されるため）
+          } catch (e) {}
+        }, 400);
+      } catch (e) {}
+    }, true);
   })();
   </script>
 
